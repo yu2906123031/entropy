@@ -1,0 +1,15 @@
+{
+  "name": "entropy-hype-grid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "probe": "node src/cli.js probe",
+    "plan": "node src/cli.js plan",
+    "stream": "node src/cli.js stream",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
