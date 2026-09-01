@@ -1,54 +1,56 @@
 # Entropy ZEC Market Maker
 
-Inventory-aware two-sided market-making core and read-only Hyperliquid planner.
+Inventory-aware, toxicity-aware two-sided market-making core for Hyperliquid, with a fail-closed read-only planner and a deliberately gated live strategy.
 
-## Commands
+## What changed in adaptive-v2
 
-```powershell
-npm test
-npm run probe
-npm run plan
-npm run stream
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python scripts/mm_dry_run.py
-```
+The strategy was rewritten after sustained negative testing. The new model adds:
 
-`scripts/mm_dry_run.py` fetches the live ZEC order book, account inventory and
-open orders, then prints a cancel-first reconciliation plan. It cannot sign or
-submit an order.
+- capped L1 microprice influence instead of trusting raw top-of-book imbalance
+- nonlinear inventory reservation-price skew
+- inventory-aware allocation of remaining long/short gross capacity
+- continuous volatility widening, size reduction and layer reduction
+- soft and hard reprice thresholds so minimum quote lifetime never protects a materially stale quote
+- 1s/5s/30s maker-fill markout tracking and a negative-markout toxicity halt
+- five-level depth toxicity filtering and adverse-side-only quote suppression
+- per-cycle quote epochs in Hyperliquid CLOIDs while preserving retry idempotency
+- explicit execution result categories and partial-placement state
+- stale-book, position, margin, daily-loss, volatility, inventory-age and adverse-move gates
+- transactional SQLite FIFO lot ledger, fill replay protection and restart recovery
+- cancel-first execution verification and ALO-only opening orders
+- rolling latency, quote-survival and order-churn observations
 
-The Python quoting core provides:
+## Safety posture
 
-- microprice-based fair value
-- inventory-skewed reservation prices
-- three-layer Post-Only bid/ask quotes
-- long, short, net and gross exposure budgets
-- elevated-volatility widening and shock suppression
-- deterministic preservation, cancellation and placement planning
-- minimum order lifetime and configurable reprice thresholds
-- stale-book, position, margin, daily-loss and volatility risk gates
-- transactional SQLite FIFO lot ledger with idempotent trade IDs and restart recovery
-- cursor-based Hyperliquid fill synchronization with replay overlap and gap protection
-- fail-closed Hyperliquid venue adapter with ALO-only quotes and a verified cancel-first barrier
-- supervised read-only daemon with a process lock, cycle timeout, exponential backoff, signal handling and atomic health state
-- post-execution persistence, forced fill refresh, exchange order snapshots, orphan detection, position recheck and cumulative dry-run metrics
-- rolling latency p50/p95, quote-survival and cancel/place churn observations
-- deterministic timeout, partial-execution and restart-recovery drills
-- read-only dedicated-wallet and minimum-notional live preflight
-
-Configuration can be supplied with the environment variables documented in
-`.env.example`. The current Entropy builder attribution is displayed with every
-generated plan so it can later be included in signed Hyperliquid order actions.
-
-Do not put a main-wallet private key in this project. The live phase will use a
-separately approved API/Agent wallet and an explicit live-trading switch.
-
-Operational validation commands:
+New risk-increasing orders are fail-closed. The legacy live environment is not enough to resume openings after the adaptive-v2 reset. The live ZEC script additionally requires:
 
 ```bash
-.venv/bin/python scripts/mm_resilience_drill.py
-ENTROPY_ACCOUNT=0x... ENTROPY_OPERATOR_ADDRESS=0x... \
-  .venv/bin/python scripts/mm_live_preflight.py
+ENTROPY_ALLOW_NEW_OPENINGS=true
+ENTROPY_STRATEGY_RESET_ACK=adaptive-v2
 ```
 
-The preflight loads no private key and performs zero signed calls. The daemon live path remains locked.
+Do not enable those values merely because the code starts successfully. First validate dry-run quote behavior and maker-fill markouts. A strategy with persistently negative 5-second markout should remain disabled even if operational checks are green.
+
+Never put a main-wallet private key in this project. Use a separately approved API/Agent wallet.
+
+## Validation
+
+```bash
+npm ci
+npm test
+python -m unittest discover -s tests -v
+python scripts/mm_dry_run.py
+python scripts/mm_resilience_drill.py
+```
+
+The repository includes GitHub Actions CI for both the Python and Node test suites.
+
+## Read-only planner
+
+`scripts/mm_dry_run.py` fetches the live ZEC book, account inventory, fills and open orders, then prints a cancel-first reconciliation plan. It performs zero signed order calls. Risk limits and adaptive quote parameters are configurable through `.env.example` variables instead of using the old oversized planner defaults.
+
+## Live strategy
+
+`scripts/zec_neutral_mm.py` is the bounded adaptive live strategy. It uses five-level book depth, capped fair value, nonlinear inventory skew, continuous volatility protection, hard stale-quote cancellation, short inventory holding limits and in-process fill markouts. If 5-second maker markout becomes persistently negative, new inventory is suppressed.
+
+The live phase remains operator-controlled; code changes cannot establish that the strategy has positive expectancy. Promote sizing only after out-of-sample net PnL after fees and fill markouts are acceptable.
