@@ -17,8 +17,27 @@ def _statuses(response: Any) -> list[Any]:
     return payload.get("data", {}).get("statuses", []) if isinstance(payload, dict) else []
 
 
+def _category(status: Any) -> str:
+    text = str(status).lower()
+    if "post only" in text or "immediately matched" in text:
+        return "post_only_reject"
+    if "margin" in text:
+        return "margin_reject"
+    if "rate" in text or "429" in text:
+        return "rate_limit"
+    if "size" in text or "minimum" in text or "min notional" in text:
+        return "size_reject"
+    if "success" in text or "resting" in text:
+        return "accepted"
+    if "missing_status" in text:
+        return "unknown_state"
+    return "venue_reject"
+
+
 def _cloid(coin: str, place: Place) -> Cloid:
-    material = f"entropy|{coin}|{place.side}|{place.level}|{place.price}|{place.size}|{place.reduce_only}"
+    # quote_epoch makes a newly generated quote distinct from an identical historical quote,
+    # while retries of the same ReconcilePlan remain idempotent.
+    material = f"entropy|{coin}|{place.quote_epoch}|{place.side}|{place.level}|{place.price}|{place.size}|{place.reduce_only}"
     value = hashlib.sha256(material.encode()).hexdigest()[:32]
     return Cloid.from_str("0x" + value)
 
@@ -41,7 +60,7 @@ class HyperliquidVenue:
         for index, oid in enumerate(order_ids):
             status = statuses[index] if index < len(statuses) else {"error": "missing_status"}
             accepted = status == "success" or isinstance(status, dict) and "success" in status
-            results.append(ActionResult(str(oid), accepted, str(status), oid))
+            results.append(ActionResult(str(oid), accepted, str(status), oid, _category(status)))
         return tuple(results)
 
     def place_orders(self, places: tuple[Place, ...]) -> tuple[ActionResult, ...]:
@@ -67,11 +86,11 @@ class HyperliquidVenue:
         results: list[ActionResult] = []
         for index, place in enumerate(places):
             status = statuses[index] if index < len(statuses) else {"error": "missing_status"}
-            reference = f"{place.side}:{place.level}"
+            reference = f"{place.side}:{place.level}:{place.quote_epoch}"
             resting = status.get("resting", {}) if isinstance(status, dict) else {}
             oid = int(resting["oid"]) if isinstance(resting, dict) and "oid" in resting else None
             accepted = oid is not None
-            results.append(ActionResult(reference, accepted, str(status), oid))
+            results.append(ActionResult(reference, accepted, str(status), oid, _category(status)))
         return tuple(results)
 
     def open_order_ids(self) -> set[int]:
