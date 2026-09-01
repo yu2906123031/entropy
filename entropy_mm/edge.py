@@ -30,6 +30,12 @@ def directional_pressure_bps(mids: list[float], lookback: int = 6) -> float:
     return (sample[-1] / sample[0] - 1.0) * 10_000.0
 
 
+def _side_adverse(mean_bps: float | None, negative_rate: float | None) -> tuple[float, float]:
+    adverse = max(0.0, -(mean_bps or 0.0))
+    negative = _clip(negative_rate or 0.0, 0.0, 1.0)
+    return adverse, negative
+
+
 def profitability_edge(
     *,
     volatility_bps: float,
@@ -39,19 +45,27 @@ def profitability_edge(
     directional_bps: float,
     round_trip_fee_bps: float,
     minimum_profit_bps: float,
+    buy_markout_mean_bps: float | None = None,
+    buy_markout_negative_rate: float | None = None,
+    sell_markout_mean_bps: float | None = None,
+    sell_markout_negative_rate: float | None = None,
+    fill_size_multiplier: float = 1.0,
     max_directional_bps: float = 30.0,
 ) -> EdgeDecision:
-    """Translate observed toxicity into spread, size and side-specific risk controls.
-
-    The required edge increases when historical maker markout is adverse, current
-    volatility rises, flow becomes directional, or the book is strongly imbalanced.
-    Size shrinks continuously instead of waiting for a hard halt.
-    """
-    values = (volatility_bps, book_imbalance, directional_bps, round_trip_fee_bps, minimum_profit_bps)
+    """Translate learned adverse selection into spread, size and side-specific controls."""
+    values = (
+        volatility_bps,
+        book_imbalance,
+        directional_bps,
+        round_trip_fee_bps,
+        minimum_profit_bps,
+        fill_size_multiplier,
+    )
     if any(not math.isfinite(v) for v in values):
         raise ValueError("edge inputs must be finite")
-    adverse_markout = max(0.0, -(markout_mean_bps or 0.0))
-    negative_rate = _clip(markout_negative_rate or 0.0, 0.0, 1.0)
+    adverse_markout, negative_rate = _side_adverse(markout_mean_bps, markout_negative_rate)
+    buy_adverse, buy_negative = _side_adverse(buy_markout_mean_bps, buy_markout_negative_rate)
+    sell_adverse, sell_negative = _side_adverse(sell_markout_mean_bps, sell_markout_negative_rate)
     imbalance_mag = _clip(abs(book_imbalance), 0.0, 1.0)
     direction_mag = min(abs(directional_bps), max_directional_bps)
 
@@ -62,24 +76,31 @@ def profitability_edge(
     required = round_trip_fee_bps + minimum_profit_bps + toxicity_buffer + volatility_buffer + imbalance_buffer + direction_buffer
 
     score = toxicity_buffer + volatility_buffer + imbalance_buffer + direction_buffer
-    size_multiplier = _clip(1.0 / (1.0 + score / 12.0), 0.20, 1.0)
+    learned_multiplier = _clip(fill_size_multiplier, 0.20, 1.0)
+    size_multiplier = _clip(1.0 / (1.0 + score / 12.0), 0.20, 1.0) * learned_multiplier
+    size_multiplier = _clip(size_multiplier, 0.10, 1.0)
 
-    # Upward pressure makes asks dangerous; downward pressure makes bids dangerous.
     directional_extra = min(18.0, direction_mag * 0.60)
     bid_extra = directional_extra if directional_bps < 0 else 0.0
     ask_extra = directional_extra if directional_bps > 0 else 0.0
 
-    # Book imbalance is interpreted conservatively: large bid depth can make asks
-    # vulnerable to upward pressure, large ask depth can make bids vulnerable.
     imbalance_extra = min(12.0, imbalance_mag * 12.0)
     if book_imbalance > 0:
         ask_extra += imbalance_extra
     elif book_imbalance < 0:
         bid_extra += imbalance_extra
 
+    # Side-specific historical toxicity widens only the side that has been selected against.
+    bid_extra += min(20.0, buy_adverse * 1.5 + max(0.0, buy_negative - 0.5) * 10.0)
+    ask_extra += min(20.0, sell_adverse * 1.5 + max(0.0, sell_negative - 0.5) * 10.0)
+
     pause_bid = directional_bps <= -max_directional_bps or (book_imbalance <= -0.90 and volatility_bps >= 5.0)
     pause_ask = directional_bps >= max_directional_bps or (book_imbalance >= 0.90 and volatility_bps >= 5.0)
-    if adverse_markout >= 8.0 and negative_rate >= 0.75:
+    if buy_adverse >= 8.0 and buy_negative >= 0.75:
+        pause_bid = True
+    if sell_adverse >= 8.0 and sell_negative >= 0.75:
+        pause_ask = True
+    if adverse_markout >= 10.0 and negative_rate >= 0.85:
         pause_bid = True
         pause_ask = True
 
