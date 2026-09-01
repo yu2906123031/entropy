@@ -28,10 +28,6 @@ class FillQuality:
     mean_queue_ahead_ratio: float | None
 
 
-def quote_key(order_id: int) -> str:
-    return str(int(order_id))
-
-
 class QuoteQualityStore:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -69,27 +65,32 @@ class QuoteQualityStore:
                 ),
             )
 
-    def close(self, order_id: int, *, closed_at_ms: int, filled: bool) -> bool:
-        if closed_at_ms < 0:
-            raise ValueError("closed_at_ms must be non-negative")
+    def close(self, order_id: int, *, closed_at_ms: int, outcome: str) -> bool:
+        if closed_at_ms < 0 or outcome not in {"fill", "cancel", "unknown"}:
+            raise ValueError("invalid close outcome")
         with self._connect() as db:
             cursor = db.execute(
                 "UPDATE quote_exposures SET closed_at_ms=?, outcome=? WHERE order_id=? AND closed_at_ms IS NULL",
-                (closed_at_ms, "fill" if filled else "cancel", int(order_id)),
+                (closed_at_ms, outcome, int(order_id)),
             )
         return cursor.rowcount > 0
 
-    def open_ids(self) -> set[int]:
+    def open_exposures(self) -> dict[int, Exposure]:
         with self._connect() as db:
-            rows = db.execute("SELECT order_id FROM quote_exposures WHERE closed_at_ms IS NULL").fetchall()
-        return {int(row[0]) for row in rows}
+            rows = db.execute(
+                "SELECT order_id, side, price, size, created_at_ms, distance_bps, queue_ahead FROM quote_exposures WHERE closed_at_ms IS NULL"
+            ).fetchall()
+        return {
+            int(row[0]): Exposure(int(row[0]), str(row[1]), float(row[2]), float(row[3]), int(row[4]), float(row[5]), float(row[6]))
+            for row in rows
+        }
 
     def quality(self, *, side: str | None = None, last_n: int = 200) -> FillQuality:
         if side not in {None, "buy", "sell"} or last_n < 1:
             raise ValueError("invalid quality query")
         query = (
             "SELECT side, size, created_at_ms, closed_at_ms, outcome, distance_bps, queue_ahead "
-            "FROM quote_exposures WHERE closed_at_ms IS NOT NULL"
+            "FROM quote_exposures WHERE closed_at_ms IS NOT NULL AND outcome IN ('fill','cancel')"
         )
         params: list[object] = []
         if side is not None:
