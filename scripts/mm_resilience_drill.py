@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Deterministic timeout, partial-execution and restart-recovery drills."""
+"""Deterministic timeout, partial-execution, ambiguity and restart-recovery drills."""
 from __future__ import annotations
 
 from dataclasses import asdict
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 
@@ -30,6 +31,22 @@ class PartialVenue:
     def place_orders(self, places):
         self.place_calls += 1
         return (ActionResult("buy:0", True, "resting", 7001),)
+
+
+class AmbiguousVenue:
+    """Simulates a placement accepted by venue while the HTTP response is lost."""
+
+    def cancel_orders(self, order_ids):
+        return ()
+
+    def open_order_ids(self):
+        return {8001}
+
+    def place_orders(self, places):
+        return tuple(ActionResult(f"{p.side}:{p.level}", False, "missing_status", None, "unknown_state") for p in places)
+
+    def recover_place_results(self, places, results):
+        return tuple(ActionResult(f"{p.side}:{p.level}", True, "recovered_from_open_orders", 8001 + i, "accepted_recovered") for i, p in enumerate(places))
 
 
 def main() -> None:
@@ -59,13 +76,8 @@ def main() -> None:
             kept_order_ids=(),
         )
         venue = PartialVenue()
-        partial = execute_plan(
-            plan,
-            venue,
-            mode=ExecutionMode.LIVE,
-            live_enabled=True,
-            confirmation=LIVE_CONFIRMATION,
-        )
+        partial = execute_plan(plan, venue, mode=ExecutionMode.LIVE, live_enabled=True, confirmation=LIVE_CONFIRMATION)
+        ambiguous = execute_plan(plan, AmbiguousVenue(), mode=ExecutionMode.LIVE, live_enabled=True, confirmation=LIVE_CONFIRMATION)
 
         db_path = root / "ops.sqlite3"
         first = OperationsStore(db_path)
@@ -79,6 +91,26 @@ def main() -> None:
             "failed_cycles": recovered.metrics().failed_cycles,
         }
 
+        lock_path = root / "locked.sqlite3"
+        db1 = sqlite3.connect(lock_path, timeout=0.01)
+        db1.execute("CREATE TABLE x(v INTEGER)")
+        db1.commit()
+        db1.execute("BEGIN EXCLUSIVE")
+        db1.execute("INSERT INTO x VALUES (1)")
+        storage_lock_detected = False
+        try:
+            db2 = sqlite3.connect(lock_path, timeout=0.01)
+            try:
+                db2.execute("INSERT INTO x VALUES (2)")
+                db2.commit()
+            except sqlite3.OperationalError:
+                storage_lock_detected = True
+            finally:
+                db2.close()
+        finally:
+            db1.rollback()
+            db1.close()
+
         report = {
             "timeout": {
                 "attempts": attempts,
@@ -87,12 +119,17 @@ def main() -> None:
                 "last_error": timeout_health.last_error,
             },
             "partial_execution": asdict(partial),
+            "ambiguous_execution_recovery": asdict(ambiguous),
             "restart_recovery": restart,
+            "sqlite_lock_detected": storage_lock_detected,
             "passed": (
                 timeout_health.stop_reason == "failure_limit"
                 and partial.status == "place_incomplete"
+                and ambiguous.status == "executed"
+                and ambiguous.placement_state == "full"
                 and restart["execution_count"] == 1
                 and restart["active_managed_order_ids"] == [7001]
+                and storage_lock_detected
             ),
             "external_signed_calls": 0,
         }
