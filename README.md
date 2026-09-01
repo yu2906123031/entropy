@@ -1,37 +1,58 @@
 # Entropy ZEC Market Maker
 
-Inventory-aware, toxicity-aware two-sided market-making core for Hyperliquid, with a fail-closed read-only planner and a deliberately gated live strategy.
+Inventory-aware, toxicity-aware and execution-quality-aware market making for Hyperliquid, with a fail-closed read-only planner and a deliberately gated live strategy.
 
-## What changed in adaptive-v2
+## Adaptive-v4 strategy
 
-The strategy was rewritten after sustained negative testing. The new model adds:
+The strategy has been rebuilt around measured maker expectancy rather than fixed spread parameters. The current model includes:
 
-- capped L1 microprice influence instead of trusting raw top-of-book imbalance
-- nonlinear inventory reservation-price skew
-- inventory-aware allocation of remaining long/short gross capacity
-- continuous volatility widening, size reduction and layer reduction
-- soft and hard reprice thresholds so minimum quote lifetime never protects a materially stale quote
-- 1s/5s/30s maker-fill markout tracking and a negative-markout toxicity halt
-- five-level depth toxicity filtering and adverse-side-only quote suppression
-- per-cycle quote epochs in Hyperliquid CLOIDs while preserving retry idempotency
-- explicit execution result categories and partial-placement state
+- five-level, exponentially weighted L2 fair value bounded inside the live BBO
+- capped microstructure influence so one distorted level cannot dominate fair value
+- nonlinear inventory reservation-price skew and inventory-aware risk capacity
+- continuous volatility widening and dynamic order-size reduction
+- profitability edge requirements that include fees, minimum desired profit, volatility, directionality, book imbalance and historical adverse markout
+- separate buy-fill and sell-fill 1s/5s/30s markout histories, so a toxic bid side does not unnecessarily disable the ask side
+- restart-safe SQLite markout persistence with automatic migration from older databases
+- persistent maker quote exposure history: distance from touch, displayed queue ahead, lifetime and final fill/cancel outcome
+- empirical fill-rate and queue-quality learning that automatically reduces size when historical execution quality deteriorates
+- directional and book-pressure penalties that widen or pause only the vulnerable side
+- soft/hard stale quote thresholds, so queue-lifetime protection never preserves materially stale orders
+- per-cycle quote epochs in Hyperliquid CLOIDs while retaining same-cycle retry idempotency
+- explicit partial/unknown execution outcomes and fail-closed cancel-first placement
 - stale-book, position, margin, daily-loss, volatility, inventory-age and adverse-move gates
-- transactional SQLite FIFO lot ledger, fill replay protection and restart recovery
-- cancel-first execution verification and ALO-only opening orders
-- rolling latency, quote-survival and order-churn observations
+- transactional FIFO ledger, fill replay protection, restart recovery and CI regression coverage
 
 ## Safety posture
 
-New risk-increasing orders are fail-closed. The legacy live environment is not enough to resume openings after the adaptive-v2 reset. The live ZEC script additionally requires:
+Risk-increasing orders are fail-closed after every strategy generation change. Existing v2/v3 live environment settings do not authorize adaptive-v4 openings. The live strategy requires both:
 
 ```bash
 ENTROPY_ALLOW_NEW_OPENINGS=true
-ENTROPY_STRATEGY_RESET_ACK=adaptive-v2
+ENTROPY_STRATEGY_RESET_ACK=adaptive-v4
 ```
 
-Do not enable those values merely because the code starts successfully. First validate dry-run quote behavior and maker-fill markouts. A strategy with persistently negative 5-second markout should remain disabled even if operational checks are green.
+Do not enable these merely because CI is green. Code correctness does not establish positive expectancy. First inspect dry-run behavior and collect enough live maker observations to evaluate net PnL after fees, side-specific 5-second markout, fill rate and queue quality.
 
 Never put a main-wallet private key in this project. Use a separately approved API/Agent wallet.
+
+## Learned diagnostics
+
+`scripts/zec_neutral_mm.py` emits the variables needed to diagnose the strategy rather than only reporting PnL:
+
+- `l2_fair` and `l2_spread_bps`
+- `required_edge_bps` and `edge_score`
+- `size_multiplier` and `learned_fill_multiplier`
+- `directional_bps` and `book_imbalance`
+- aggregate, buy-side and sell-side maker markout
+- aggregate, buy-side and sell-side empirical fill rate
+- mean queue-ahead ratio
+
+Persistent learning state is stored separately from the accounting ledger:
+
+```bash
+ENTROPY_MARKOUT_PATH=runtime/entropy_markouts.sqlite3
+ENTROPY_QUOTE_QUALITY_PATH=runtime/entropy_quote_quality.sqlite3
+```
 
 ## Validation
 
@@ -43,14 +64,14 @@ python scripts/mm_dry_run.py
 python scripts/mm_resilience_drill.py
 ```
 
-The repository includes GitHub Actions CI for both the Python and Node test suites.
+GitHub Actions runs both Python and Node tests on every push to `main` and on pull requests.
 
 ## Read-only planner
 
-`scripts/mm_dry_run.py` fetches the live ZEC book, account inventory, fills and open orders, then prints a cancel-first reconciliation plan. It performs zero signed order calls. Risk limits and adaptive quote parameters are configurable through `.env.example` variables instead of using the old oversized planner defaults.
+`scripts/mm_dry_run.py` fetches the live ZEC book, account inventory, fills and open orders, then prints a cancel-first reconciliation plan without signed order calls. Risk limits and quote parameters are configurable through `.env.example`.
 
 ## Live strategy
 
-`scripts/zec_neutral_mm.py` is the bounded adaptive live strategy. It uses five-level book depth, capped fair value, nonlinear inventory skew, continuous volatility protection, hard stale-quote cancellation, short inventory holding limits and in-process fill markouts. If 5-second maker markout becomes persistently negative, new inventory is suppressed.
+`scripts/zec_neutral_mm.py` is the bounded adaptive live strategy. It learns from its own maker fills and quote outcomes. Negative markout raises the required edge; side-specific toxicity can disable only the affected side; poor empirical fill/queue quality reduces size. L2 depth is used for fair value rather than relying solely on top-of-book microprice.
 
-The live phase remains operator-controlled; code changes cannot establish that the strategy has positive expectancy. Promote sizing only after out-of-sample net PnL after fees and fill markouts are acceptable.
+Sizing should only be promoted after out-of-sample observations show acceptable net PnL after fees and non-negative or otherwise justified maker markout. If measured expectancy stays negative, the correct action is to leave openings disabled rather than increase capital.
