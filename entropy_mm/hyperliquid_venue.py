@@ -34,12 +34,13 @@ def _category(status: Any) -> str:
     return "venue_reject"
 
 
-def _cloid(coin: str, place: Place) -> Cloid:
-    # quote_epoch makes a newly generated quote distinct from an identical historical quote,
-    # while retries of the same ReconcilePlan remain idempotent.
+def _cloid_hex(coin: str, place: Place) -> str:
     material = f"entropy|{coin}|{place.quote_epoch}|{place.side}|{place.level}|{place.price}|{place.size}|{place.reduce_only}"
-    value = hashlib.sha256(material.encode()).hexdigest()[:32]
-    return Cloid.from_str("0x" + value)
+    return "0x" + hashlib.sha256(material.encode()).hexdigest()[:32]
+
+
+def _cloid(coin: str, place: Place) -> Cloid:
+    return Cloid.from_str(_cloid_hex(coin, place))
 
 
 class HyperliquidVenue:
@@ -92,6 +93,23 @@ class HyperliquidVenue:
             accepted = oid is not None
             results.append(ActionResult(reference, accepted, str(status), oid, _category(status)))
         return tuple(results)
+
+    def recover_place_results(self, places: tuple[Place, ...], results: tuple[ActionResult, ...]) -> tuple[ActionResult, ...]:
+        """Resolve missing placement responses by matching deterministic CLOIDs."""
+        rows = [row for row in self.info.open_orders(self.address) if row.get("coin") == self.coin]
+        by_cloid = {str(row.get("cloid", "")).lower(): row for row in rows if row.get("cloid")}
+        recovered: list[ActionResult] = []
+        for index, place in enumerate(places):
+            existing = results[index] if index < len(results) else ActionResult(f"{place.side}:{place.level}:{place.quote_epoch}", False, "missing_status", None, "unknown_state")
+            if existing.accepted:
+                recovered.append(existing)
+                continue
+            row = by_cloid.get(_cloid_hex(self.coin, place).lower())
+            if row and row.get("oid") is not None:
+                recovered.append(ActionResult(existing.reference, True, "recovered_from_open_orders", int(row["oid"]), "accepted_recovered"))
+            else:
+                recovered.append(existing)
+        return tuple(recovered)
 
     def open_order_ids(self) -> set[int]:
         return {int(order["oid"]) for order in self.info.open_orders(self.address) if order.get("coin") == self.coin}
