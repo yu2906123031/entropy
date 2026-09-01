@@ -48,6 +48,29 @@ class EdgeTests(unittest.TestCase):
         self.assertTrue(up.pause_ask)
         self.assertTrue(down.pause_bid)
 
+    def test_buy_side_toxicity_only_pauses_bid(self):
+        decision = profitability_edge(
+            volatility_bps=2,
+            book_imbalance=0,
+            markout_mean_bps=-2,
+            markout_negative_rate=0.6,
+            buy_markout_mean_bps=-9,
+            buy_markout_negative_rate=0.8,
+            sell_markout_mean_bps=1,
+            sell_markout_negative_rate=0.2,
+            directional_bps=0,
+            round_trip_fee_bps=3,
+            minimum_profit_bps=8,
+        )
+        self.assertTrue(decision.pause_bid)
+        self.assertFalse(decision.pause_ask)
+        self.assertGreater(decision.bid_extra_bps, decision.ask_extra_bps)
+
+    def test_learned_fill_multiplier_reduces_size(self):
+        normal = profitability_edge(volatility_bps=2, book_imbalance=0, markout_mean_bps=0, markout_negative_rate=0.4, directional_bps=0, round_trip_fee_bps=3, minimum_profit_bps=8, fill_size_multiplier=1.0)
+        learned = profitability_edge(volatility_bps=2, book_imbalance=0, markout_mean_bps=0, markout_negative_rate=0.4, directional_bps=0, round_trip_fee_bps=3, minimum_profit_bps=8, fill_size_multiplier=0.4)
+        self.assertLess(learned.size_multiplier, normal.size_multiplier)
+
     def test_dynamic_order_size_quantizes_down(self):
         self.assertAlmostEqual(dynamic_order_size(0.05, 0.01, 0.65), 0.03)
         self.assertEqual(dynamic_order_size(0.02, 0.01, 0.20), 0.0)
