@@ -63,6 +63,8 @@ def replay_quotes(
     for snap in snapshots:
         count += 1
         signal = depth_signal(snap.levels, depth_levels=5)
+        best_bid = float(snap.levels[0][0]["px"])
+        best_ask = float(snap.levels[1][0]["px"])
         decision = profitability_edge(
             volatility_bps=snap.volatility_bps,
             book_imbalance=signal.imbalance,
@@ -77,8 +79,8 @@ def replay_quotes(
         paused_ask += int(decision.pause_ask)
         required_values.append(decision.required_edge_bps)
         pair = adaptive_quote_pair(
-            best_bid=signal.best_bid,
-            best_ask=signal.best_ask,
+            best_bid=best_bid,
+            best_ask=best_ask,
             fair_value=signal.fair_value,
             inventory=inventory,
             max_inventory=max_inventory,
@@ -94,7 +96,7 @@ def replay_quotes(
         )
         if not (decision.pause_bid and decision.pause_ask):
             quoted += 1
-        mid = (signal.best_bid + signal.best_ask) / 2.0
+        mid = (best_bid + best_ask) / 2.0
         half_spreads.append(((pair.ask - pair.bid) / mid) * 5_000.0)
     return ReplayResult(
         count,
