@@ -21,10 +21,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_duplicate_is_cancelled(self):
         desired = [Quote(0, "buy", 99.9, 0.2)]
-        plan = reconcile_orders(
-            [LiveOrder(10, "buy", 99.9, 0.2), LiveOrder(11, "buy", 99.9, 0.2)],
-            desired,
-        )
+        plan = reconcile_orders([LiveOrder(10, "buy", 99.9, 0.2), LiveOrder(11, "buy", 99.9, 0.2)], desired)
         self.assertEqual(plan.kept_order_ids, (10,))
         self.assertEqual([item.order_id for item in plan.cancels], [11])
 
@@ -35,24 +32,33 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(plan.cancels, ())
 
     def test_small_price_move_is_kept_inside_refresh_threshold(self):
-        plan = reconcile_orders(
-            [LiveOrder(10, "buy", 99.99, 0.2)],
-            [Quote(0, "buy", 100.0, 0.2)],
-            reprice_threshold_bps=2.0,
-        )
+        plan = reconcile_orders([LiveOrder(10, "buy", 99.99, 0.2)], [Quote(0, "buy", 100.0, 0.2)], reprice_threshold_bps=2.0)
         self.assertEqual(plan.kept_order_ids, (10,))
         self.assertEqual(plan.places, ())
 
-    def test_young_order_is_kept_until_minimum_lifetime(self):
+    def test_young_order_is_kept_only_inside_hard_threshold(self):
+        plan = reconcile_orders(
+            [LiveOrder(10, "buy", 99.95, 0.2, created_at_ms=9_000)],
+            [Quote(0, "buy", 100.0, 0.2)],
+            now_ms=10_000,
+            min_order_lifetime_ms=5_000,
+            reprice_threshold_bps=2.0,
+            hard_reprice_threshold_bps=8.0,
+        )
+        self.assertEqual(plan.kept_order_ids, (10,))
+        self.assertEqual(plan.cancels, ())
+
+    def test_materially_stale_young_order_is_cancelled_immediately(self):
         plan = reconcile_orders(
             [LiveOrder(10, "buy", 99.0, 0.2, created_at_ms=9_000)],
             [Quote(0, "buy", 100.0, 0.2)],
             now_ms=10_000,
             min_order_lifetime_ms=5_000,
             reprice_threshold_bps=2.0,
+            hard_reprice_threshold_bps=8.0,
         )
-        self.assertEqual(plan.kept_order_ids, (10,))
-        self.assertEqual(plan.cancels, ())
+        self.assertEqual(plan.cancels[0].reason, "hard_stale")
+        self.assertEqual(plan.kept_order_ids, ())
 
     def test_old_order_outside_threshold_is_repriced(self):
         plan = reconcile_orders(
@@ -64,6 +70,10 @@ class ReconcileTests(unittest.TestCase):
         )
         self.assertEqual([item.order_id for item in plan.cancels], [10])
         self.assertEqual([item.price for item in plan.places], [100.0])
+
+    def test_new_places_carry_cycle_epoch(self):
+        plan = reconcile_orders([], [Quote(0, "buy", 100.0, 0.2)], quote_epoch=12345)
+        self.assertEqual(plan.places[0].quote_epoch, 12345)
 
 
 if __name__ == "__main__":
