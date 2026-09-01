@@ -18,7 +18,7 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 
-from entropy_mm.toxicity import FillObservation, MarkoutTracker
+from entropy_mm.toxicity import FillObservation, MarkoutStore, MarkoutTracker
 
 ACCOUNT = os.getenv("ENTROPY_ACCOUNT", "0x78605485604BA45ce0eF860DB1594ec810154477")
 AGENT = os.getenv("ENTROPY_AGENT", "0x3B4347B99BB749eBdD6DE720736796E1b7Dfe4a6")
@@ -57,6 +57,7 @@ MARKET_CLOSE_SLIPPAGE = 0.005
 MARKOUT_HORIZON_MS = 5_000
 TOXIC_MARKOUT_MEAN_BPS = -2.0
 TOXIC_MARKOUT_MIN_SAMPLES = 10
+MARKOUT_PATH = os.getenv("ENTROPY_MARKOUT_PATH", "runtime/entropy_markouts.sqlite3")
 STRATEGY_RESET_ACK = "adaptive-v2"
 KEYSTORE = Path(__file__).resolve().parents[1] / "secrets" / "agent-keystore.json"
 BUILDER = {"b": "0xcd254d2a328f7f67c7c6fef930a4757516f7b601", "f": 0}
@@ -376,14 +377,16 @@ def main() -> None:
     exchange.update_leverage(1, COIN, True)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    session_started_ms = int(time.time() * 1000)
     recent_mids: deque[float] = deque(maxlen=31)
     markouts = MarkoutTracker()
+    markout_store = MarkoutStore(MARKOUT_PATH)
     seen_fills: set[str] = set()
     safe_cycles = 0
     toxic_cycles = 0
     opening_gate = opening_gate_enabled() and strategy_reset_ack_enabled()
     risk_halted = False
-    print(json.dumps({"event": "start", "coin": COIN, "strategy": STRATEGY_RESET_ACK, "opening_gate": opening_gate, "capital_budget_usd": CAPITAL_BUDGET_USD}), flush=True)
+    print(json.dumps({"event": "start", "coin": COIN, "strategy": STRATEGY_RESET_ACK, "opening_gate": opening_gate, "capital_budget_usd": CAPITAL_BUDGET_USD, "markout_path": MARKOUT_PATH}), flush=True)
     if not opening_gate:
         print(json.dumps({"event": "opening_gate_locked", "required_ack": STRATEGY_RESET_ACK}), flush=True)
     try:
@@ -400,11 +403,13 @@ def main() -> None:
             fills = [fill for fill in info.user_fills_by_time(ACCOUNT, trailing_24h_start_ms()) if fill.get("coin") == COIN]
             for fill in fills:
                 observation = _fill_observation(fill)
-                if observation and observation.trade_id not in seen_fills:
+                if observation and observation.time_ms >= session_started_ms and observation.trade_id not in seen_fills:
                     seen_fills.add(observation.trade_id)
                     markouts.add_fill(observation)
             new_markouts = markouts.observe(now_ms, mid)
-            toxicity = markouts.summary(MARKOUT_HORIZON_MS, toxic_mean_bps=TOXIC_MARKOUT_MEAN_BPS, min_samples=TOXIC_MARKOUT_MIN_SAMPLES)
+            if new_markouts:
+                markout_store.record(new_markouts, recorded_at_ms=now_ms)
+            toxicity = markout_store.summary(MARKOUT_HORIZON_MS, last_n=100, toxic_mean_bps=TOXIC_MARKOUT_MEAN_BPS, min_samples=TOXIC_MARKOUT_MIN_SAMPLES)
             net_pnl = session_net_pnl(fills, upnl)
             cooldown_active = post_fill_cooldown_active(fills, now_ms)
             inventory_age = inventory_age_seconds(fills, now_ms) if p else 0.0
