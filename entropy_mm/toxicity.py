@@ -22,6 +22,7 @@ class Markout:
     horizon_ms: int
     mark_price: float
     markout_bps: float
+    side: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,13 @@ class MarkoutTracker:
             for horizon in self.horizons_ms:
                 key = (trade_id, horizon)
                 if key not in self._done and age >= horizon:
-                    item = Markout(trade_id, horizon, mark_price, signed_markout_bps(fill.side, fill.price, mark_price))
+                    item = Markout(
+                        trade_id,
+                        horizon,
+                        mark_price,
+                        signed_markout_bps(fill.side, fill.price, mark_price),
+                        fill.side,
+                    )
                     self.completed.append(item)
                     self._done.add(key)
                     produced.append(item)
@@ -71,8 +78,21 @@ class MarkoutTracker:
                 self.pending.pop(trade_id, None)
         return tuple(produced)
 
-    def summary(self, horizon_ms: int = 5_000, *, toxic_mean_bps: float = -2.0, min_samples: int = 10) -> ToxicitySummary:
-        values = [m.markout_bps for m in self.completed if m.horizon_ms == horizon_ms]
+    def summary(
+        self,
+        horizon_ms: int = 5_000,
+        *,
+        side: str | None = None,
+        toxic_mean_bps: float = -2.0,
+        min_samples: int = 10,
+    ) -> ToxicitySummary:
+        if side not in {None, "buy", "sell"}:
+            raise ValueError("side must be buy, sell or None")
+        values = [
+            m.markout_bps
+            for m in self.completed
+            if m.horizon_ms == horizon_ms and (side is None or m.side == side)
+        ]
         return summarize_markouts(values, toxic_mean_bps=toxic_mean_bps, min_samples=min_samples)
 
 
@@ -95,9 +115,12 @@ class MarkoutStore:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS markouts ("
                 "trade_id TEXT NOT NULL, horizon_ms INTEGER NOT NULL, mark_price REAL NOT NULL, "
-                "markout_bps REAL NOT NULL, recorded_at_ms INTEGER NOT NULL, "
+                "markout_bps REAL NOT NULL, recorded_at_ms INTEGER NOT NULL, side TEXT NOT NULL DEFAULT '', "
                 "PRIMARY KEY(trade_id, horizon_ms))"
             )
+            columns = {row[1] for row in db.execute("PRAGMA table_info(markouts)")}
+            if "side" not in columns:
+                db.execute("ALTER TABLE markouts ADD COLUMN side TEXT NOT NULL DEFAULT ''")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=10)
@@ -111,8 +134,8 @@ class MarkoutStore:
         with self._connect() as db:
             for item in markouts:
                 cursor = db.execute(
-                    "INSERT OR IGNORE INTO markouts(trade_id, horizon_ms, mark_price, markout_bps, recorded_at_ms) VALUES (?, ?, ?, ?, ?)",
-                    (item.trade_id, item.horizon_ms, item.mark_price, item.markout_bps, recorded_at_ms),
+                    "INSERT OR IGNORE INTO markouts(trade_id, horizon_ms, mark_price, markout_bps, recorded_at_ms, side) VALUES (?, ?, ?, ?, ?, ?)",
+                    (item.trade_id, item.horizon_ms, item.mark_price, item.markout_bps, recorded_at_ms, item.side),
                 )
                 inserted += int(cursor.rowcount > 0)
         return inserted
@@ -121,16 +144,25 @@ class MarkoutStore:
         self,
         horizon_ms: int = 5_000,
         *,
+        side: str | None = None,
         last_n: int = 100,
         toxic_mean_bps: float = -2.0,
         min_samples: int = 10,
     ) -> ToxicitySummary:
         if last_n < 1:
             raise ValueError("last_n must be positive")
+        if side not in {None, "buy", "sell"}:
+            raise ValueError("side must be buy, sell or None")
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT markout_bps FROM markouts WHERE horizon_ms=? ORDER BY recorded_at_ms DESC LIMIT ?",
-                (horizon_ms, last_n),
-            ).fetchall()
+            if side is None:
+                rows = db.execute(
+                    "SELECT markout_bps FROM markouts WHERE horizon_ms=? ORDER BY recorded_at_ms DESC LIMIT ?",
+                    (horizon_ms, last_n),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT markout_bps FROM markouts WHERE horizon_ms=? AND side=? ORDER BY recorded_at_ms DESC LIMIT ?",
+                    (horizon_ms, side, last_n),
+                ).fetchall()
         values = [float(row[0]) for row in rows]
         return summarize_markouts(values, toxic_mean_bps=toxic_mean_bps, min_samples=min_samples)
