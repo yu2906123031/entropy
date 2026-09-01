@@ -53,6 +53,15 @@ def _placement_state(expected: int, results: tuple[ActionResult, ...]) -> str:
     return "unknown"
 
 
+def _recover_places(venue: Venue, places: tuple[Place, ...], results: tuple[ActionResult, ...]) -> tuple[ActionResult, ...]:
+    recover = getattr(venue, "recover_place_results", None)
+    if callable(recover):
+        recovered = recover(places, results)
+        if isinstance(recovered, tuple):
+            return recovered
+    return results
+
+
 def execute_plan(
     plan: ReconcilePlan,
     venue: Venue,
@@ -62,7 +71,7 @@ def execute_plan(
     confirmation: str = "",
     allow_opening: bool = True,
 ) -> ExecutionResult:
-    """Execute a plan with a verified cancel-first barrier and explicit partial-state reporting."""
+    """Execute with cancel-first barriers and ambiguity recovery before retry/failure."""
     if mode is ExecutionMode.DRY_RUN:
         return ExecutionResult(mode, "planned_only", (), ())
     if not live_enabled or confirmation != LIVE_CONFIRMATION:
@@ -70,12 +79,18 @@ def execute_plan(
 
     cancel_ids = tuple(action.order_id for action in plan.cancels)
     cancel_results = venue.cancel_orders(cancel_ids) if cancel_ids else ()
-    if len(cancel_results) != len(cancel_ids) or any(not result.accepted for result in cancel_results):
-        return ExecutionResult(mode, "cancel_rejected", cancel_results, ())
+    if cancel_ids:
+        # Query actual venue state even when a response was missing/rejected. If the
+        # orders are gone, treating the cancellation as successful prevents a blind retry.
+        open_ids = venue.open_order_ids()
+        remaining = tuple(sorted(set(cancel_ids) & open_ids))
+        if remaining:
+            if len(cancel_results) != len(cancel_ids) or any(not result.accepted for result in cancel_results):
+                return ExecutionResult(mode, "cancel_rejected", cancel_results, (), remaining)
+            return ExecutionResult(mode, "cancel_unconfirmed", cancel_results, (), remaining)
+    else:
+        remaining = ()
 
-    remaining = tuple(sorted(set(cancel_ids) & venue.open_order_ids())) if cancel_ids else ()
-    if remaining:
-        return ExecutionResult(mode, "cancel_unconfirmed", cancel_results, (), remaining)
     if not allow_opening or not plan.places:
         return ExecutionResult(mode, "cancelled_only", cancel_results, ())
     if any(not place.post_only for place in plan.places):
@@ -83,6 +98,9 @@ def execute_plan(
 
     place_results = venue.place_orders(plan.places)
     state = _placement_state(len(plan.places), place_results)
+    if state != "full":
+        place_results = _recover_places(venue, plan.places, place_results)
+        state = _placement_state(len(plan.places), place_results)
     if state != "full":
         return ExecutionResult(mode, "place_incomplete", cancel_results, place_results, placement_state=state)
     return ExecutionResult(mode, "executed", cancel_results, place_results, placement_state="full")
