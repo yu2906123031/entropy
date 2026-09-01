@@ -53,6 +53,8 @@ def replay_quotes(
     base_half_spread_bps: float = 35.0,
     fee_bps: float = 3.0,
     minimum_profit_bps: float = 8.0,
+    base_size: float = 0.02,
+    lot_size: float = 0.01,
 ) -> ReplayResult:
     quoted = paused_bid = paused_ask = 0
     required_values: list[float] = []
@@ -81,12 +83,14 @@ def replay_quotes(
             inventory=inventory,
             max_inventory=max_inventory,
             volatility_bps=snap.volatility_bps,
-            bid_adverse_buffer_bps=decision.bid_extra_bps,
-            ask_adverse_buffer_bps=decision.ask_extra_bps,
-            required_edge_bps=decision.required_edge_bps,
+            bid_buffer_bps=0.0,
+            ask_buffer_bps=0.0,
+            edge=decision,
             base_half_spread_bps=base_half_spread_bps,
             round_trip_fee_bps=fee_bps,
             minimum_profit_bps=minimum_profit_bps,
+            base_size=base_size,
+            lot_size=lot_size,
         )
         if not (decision.pause_bid and decision.pause_ask):
             quoted += 1
