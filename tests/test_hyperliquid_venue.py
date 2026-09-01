@@ -35,21 +35,34 @@ class HyperliquidVenueTests(unittest.TestCase):
         self.assertTrue(result[0].accepted)
         self.assertEqual(self.exchange.cancel_requests, [{"coin": "HYPE", "oid": 11}])
 
-    def test_place_uses_alo_and_deterministic_cloid(self):
-        place = Place(0, "buy", 99.0, 0.1)
-        first = self.venue.place_orders((place,))
-        first_cloid = self.exchange.order_requests[0]["cloid"].to_raw()
-        second = self.venue.place_orders((place,))
-        second_cloid = self.exchange.order_requests[0]["cloid"].to_raw()
+    def test_same_plan_retry_keeps_cloid_idempotent(self):
+        place = Place(0, "buy", 99.0, 0.1, quote_epoch=123)
+        self.venue.place_orders((place,))
+        first = self.exchange.order_requests[0]["cloid"].to_raw()
+        self.venue.place_orders((place,))
+        second = self.exchange.order_requests[0]["cloid"].to_raw()
+        self.assertEqual(first, second)
+
+    def test_new_quote_epoch_changes_cloid(self):
+        self.venue.place_orders((Place(0, "buy", 99.0, 0.1, quote_epoch=123),))
+        first = self.exchange.order_requests[0]["cloid"].to_raw()
+        self.venue.place_orders((Place(0, "buy", 99.0, 0.1, quote_epoch=124),))
+        second = self.exchange.order_requests[0]["cloid"].to_raw()
+        self.assertNotEqual(first, second)
+
+    def test_place_uses_alo(self):
+        result = self.venue.place_orders((Place(0, "buy", 99.0, 0.1, quote_epoch=1),))
         request = self.exchange.order_requests[0]
-        self.assertTrue(first[0].accepted and second[0].accepted)
+        self.assertTrue(result[0].accepted)
+        self.assertEqual(result[0].category, "accepted")
         self.assertEqual(request["order_type"], {"limit": {"tif": "Alo"}})
         self.assertFalse(request["reduce_only"])
-        self.assertEqual(first_cloid, second_cloid)
 
     def test_missing_status_fails_closed(self):
         self.exchange.order_response = {"status": "ok", "response": {"data": {"statuses": []}}}
-        self.assertFalse(self.venue.place_orders((Place(0, "sell", 101, 0.1),))[0].accepted)
+        result = self.venue.place_orders((Place(0, "sell", 101, 0.1),))[0]
+        self.assertFalse(result.accepted)
+        self.assertEqual(result.category, "unknown_state")
 
     def test_open_orders_are_filtered_by_coin(self):
         self.assertEqual(self.venue.open_order_ids(), {22})
