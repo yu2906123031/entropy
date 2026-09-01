@@ -30,8 +30,18 @@ class DegradationController:
     recovery_windows: int = 5
 
     def update(self, signal: HealthSignal) -> StrategyState:
-        severe = signal.unknown_execution or signal.api_errors >= 3 or (signal.markout_30s_bps is not None and signal.markout_30s_bps <= -8.0)
-        bad = signal.api_errors >= 1 or signal.pnl_slope_usd < -0.02 or (signal.markout_5s_bps is not None and signal.markout_5s_bps <= -4.0)
+        bilateral_toxicity = signal.toxic_bid and signal.toxic_ask
+        severe = (
+            signal.unknown_execution
+            or signal.api_errors >= 3
+            or bilateral_toxicity
+            or (signal.markout_30s_bps is not None and signal.markout_30s_bps <= -8.0)
+        )
+        bad = (
+            signal.api_errors >= 1
+            or signal.pnl_slope_usd < -0.02
+            or (signal.markout_5s_bps is not None and signal.markout_5s_bps <= -4.0)
+        )
         one_side = signal.toxic_bid ^ signal.toxic_ask
         if severe:
             target = StrategyState.HALTED
@@ -55,4 +65,9 @@ class DegradationController:
         return self.state
 
     def size_multiplier(self) -> float:
-        return {StrategyState.NORMAL: 1.0, StrategyState.REDUCED: 0.5, StrategyState.ONE_SIDE: 0.5, StrategyState.HALTED: 0.0}[self.state]
+        return {
+            StrategyState.NORMAL: 1.0,
+            StrategyState.REDUCED: 0.5,
+            StrategyState.ONE_SIDE: 0.5,
+            StrategyState.HALTED: 0.0,
+        }[self.state]
