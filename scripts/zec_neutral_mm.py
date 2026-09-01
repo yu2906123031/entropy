@@ -18,7 +18,8 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 
-from entropy_mm.edge import directional_pressure_bps, dynamic_order_size, profitability_edge
+from entropy_mm.adaptive_strategy import adaptive_quote_pair
+from entropy_mm.edge import EdgeDecision, directional_pressure_bps, profitability_edge
 from entropy_mm.microstructure import depth_signal, distance_from_touch_bps, queue_ahead_size
 from entropy_mm.quote_quality import Exposure, QuoteQualityStore, empirical_fill_multiplier
 from entropy_mm.toxicity import FillObservation, MarkoutStore, MarkoutTracker
@@ -66,7 +67,7 @@ QUALITY_PATH = os.getenv("ENTROPY_QUOTE_QUALITY_PATH", "runtime/entropy_quote_qu
 LOT_SIZE = float(os.getenv("ENTROPY_LOT_SIZE", "0.01"))
 STRATEGY_RESET_ACK = "adaptive-v4"
 KEYSTORE = Path(__file__).resolve().parents[1] / "secrets" / "agent-keystore.json"
-BUILDER = {"b": "0xcd254d2a328f7f67c7c6fef930a4757516f7b601", "f": 0}
+BUILDER = {"b": "0xcd254d2a328f7f67c7c6FEf930A4757516F7b601".lower(), "f": 0}
 running = True
 
 
@@ -108,12 +109,7 @@ def order_price_distance_bps(order: dict, price: float) -> float:
 
 
 def order_matches(order: dict, buy: bool, size: float, price: float, reduce_only: bool, threshold_bps: float = REQUOTE_THRESHOLD_BPS) -> bool:
-    return (
-        order.get("side") == ("B" if buy else "A")
-        and abs(float(order.get("sz", 0) or 0) - size) < 1e-9
-        and bool(order.get("reduceOnly", False)) == reduce_only
-        and order_price_distance_bps(order, price) < threshold_bps
-    )
+    return order.get("side") == ("B" if buy else "A") and abs(float(order.get("sz", 0) or 0) - size) < 1e-9 and bool(order.get("reduceOnly", False)) == reduce_only and order_price_distance_bps(order, price) < threshold_bps
 
 
 def quote_pair_matches(orders: list[dict], size: float, bid: float, ask: float) -> bool:
@@ -168,10 +164,7 @@ def passive_quotes(info: Info, strategy_bid: float, strategy_ask: float) -> tupl
     best_bid = Decimal(str(levels[0][0]["px"]))
     best_ask = Decimal(str(levels[1][0]["px"]))
     tick = Decimal(os.getenv("ENTROPY_PRICE_TICK", "0.1"))
-    return (
-        float(min(Decimal(str(strategy_bid)), best_bid).quantize(tick, rounding=ROUND_FLOOR)),
-        float(max(Decimal(str(strategy_ask)), best_ask).quantize(tick, rounding=ROUND_CEILING)),
-    )
+    return float(min(Decimal(str(strategy_bid)), best_bid).quantize(tick, rounding=ROUND_FLOOR)), float(max(Decimal(str(strategy_ask)), best_ask).quantize(tick, rounding=ROUND_CEILING))
 
 
 def inventory_exit_quotes(entry_price: float, szi: float, round_trip_fee_bps: float = ROUND_TRIP_MAKER_FEE_BPS, minimum_profit_bps: float = MINIMUM_NET_PROFIT_BPS) -> tuple[float | None, float | None]:
@@ -235,40 +228,32 @@ def book_toxicity_signal(bid_size: float, ask_size: float, widen_threshold: floa
     magnitude = abs(imbalance)
     span = max(1e-9, pause_threshold - widen_threshold)
     buffer = 0.0 if magnitude <= widen_threshold else max_buffer_bps * min(1.0, (magnitude - widen_threshold) / span)
-    return (
-        imbalance,
-        buffer if imbalance < 0 else 0.0,
-        buffer if imbalance > 0 else 0.0,
-        imbalance < 0 and magnitude >= pause_threshold,
-        imbalance > 0 and magnitude >= pause_threshold,
-    )
+    return imbalance, buffer if imbalance < 0 else 0.0, buffer if imbalance > 0 else 0.0, imbalance < 0 and magnitude >= pause_threshold, imbalance > 0 and magnitude >= pause_threshold
 
 
-def lighter_style_quotes(
-    best_bid: float,
-    best_ask: float,
-    bid_size: float,
-    ask_size: float,
-    inventory: float,
-    max_inventory: float,
-    volatility_bps: float,
-    bid_adverse_buffer_bps: float,
-    ask_adverse_buffer_bps: float,
-    base_half_spread_bps: float = LEVEL_SPREAD_BPS[0],
-    required_edge_bps: float = 0.0,
-    fair_value: float | None = None,
-) -> tuple[float, float]:
+def lighter_style_quotes(best_bid: float, best_ask: float, bid_size: float, ask_size: float, inventory: float, max_inventory: float, volatility_bps: float, bid_adverse_buffer_bps: float, ask_adverse_buffer_bps: float, base_half_spread_bps: float = LEVEL_SPREAD_BPS[0], required_edge_bps: float = 0.0, fair_value: float | None = None) -> tuple[float, float]:
     fair = capped_fair_value(best_bid, best_ask, bid_size, ask_size) if fair_value is None else fair_value
-    center = reservation_price(fair, inventory, max_inventory)
-    mid = (best_bid + best_ask) / 2
-    observed = (best_ask - best_bid) / mid * 5_000
-    vol_ratio = max(0.0, volatility_bps / max(FAST_MARKET_THRESHOLD_BPS, 1e-9))
-    dynamic_vol = volatility_bps * (1.0 + min(2.0, vol_ratio * vol_ratio))
-    half = max(base_half_spread_bps, observed + ROUND_TRIP_MAKER_FEE_BPS + MINIMUM_NET_PROFIT_BPS, required_edge_bps, dynamic_vol)
-    return (
-        min(center * (1.0 - (half + bid_adverse_buffer_bps) / 10_000), best_bid),
-        max(center * (1.0 + (half + ask_adverse_buffer_bps) / 10_000), best_ask),
+    compatibility_edge = EdgeDecision(required_edge_bps, 1.0, 0.0, 0.0, False, False, 0.0)
+    pair = adaptive_quote_pair(
+        best_bid=best_bid,
+        best_ask=best_ask,
+        fair_value=fair,
+        inventory=inventory,
+        max_inventory=max_inventory,
+        volatility_bps=volatility_bps,
+        bid_buffer_bps=bid_adverse_buffer_bps,
+        ask_buffer_bps=ask_adverse_buffer_bps,
+        edge=compatibility_edge,
+        base_half_spread_bps=base_half_spread_bps,
+        round_trip_fee_bps=ROUND_TRIP_MAKER_FEE_BPS,
+        minimum_profit_bps=MINIMUM_NET_PROFIT_BPS,
+        base_size=LOT_SIZE,
+        lot_size=LOT_SIZE,
+        inventory_skew_bps=INVENTORY_SKEW_BPS_AT_MAX,
+        inventory_skew_power=INVENTORY_SKEW_POWER,
+        fast_market_threshold_bps=FAST_MARKET_THRESHOLD_BPS,
     )
+    return pair.bid, pair.ask
 
 
 def directional_efficiency(mids: list[float]) -> float:
@@ -298,10 +283,7 @@ def top_book_sizes(info: Info, depth_levels: int = 5) -> tuple[float, float]:
     levels = info.l2_snapshot(COIN).get("levels", [])
     if len(levels) < 2 or not levels[0] or not levels[1]:
         raise RuntimeError("ZEC order book has no two-sided liquidity")
-    return (
-        sum(float(level.get("sz", 0) or 0) for level in levels[0][:depth_levels]),
-        sum(float(level.get("sz", 0) or 0) for level in levels[1][:depth_levels]),
-    )
+    return sum(float(level.get("sz", 0) or 0) for level in levels[0][:depth_levels]), sum(float(level.get("sz", 0) or 0) for level in levels[1][:depth_levels])
 
 
 def inventory_hard_exit_required(unrealized_pnl: float, age_seconds: float, adverse_move_bps: float = 0.0, max_loss_usd: float = MAX_INVENTORY_LOSS_USD, max_age_seconds: float = MAX_INVENTORY_AGE_SECONDS, max_adverse_move_bps: float = MAX_ADVERSE_MOVE_BPS) -> bool:
@@ -378,12 +360,7 @@ def _fill_observation(fill: dict) -> FillObservation | None:
 
 
 def _exposure_filled(exposure: Exposure, observations: list[FillObservation], tolerance_bps: float = 5.0) -> bool:
-    return any(
-        observation.side == exposure.side
-        and observation.time_ms >= exposure.created_at_ms
-        and abs(observation.price / exposure.price - 1.0) * 10_000 <= tolerance_bps
-        for observation in observations
-    )
+    return any(observation.side == exposure.side and observation.time_ms >= exposure.created_at_ms and abs(observation.price / exposure.price - 1.0) * 10_000 <= tolerance_bps for observation in observations)
 
 
 def main() -> None:
@@ -434,7 +411,6 @@ def main() -> None:
             toxicity = markout_store.summary(MARKOUT_HORIZON_MS, last_n=100, toxic_mean_bps=TOXIC_MARKOUT_MEAN_BPS, min_samples=TOXIC_MARKOUT_MIN_SAMPLES)
             buy_toxicity = markout_store.summary(MARKOUT_HORIZON_MS, side="buy", last_n=100, toxic_mean_bps=TOXIC_MARKOUT_MEAN_BPS, min_samples=TOXIC_MARKOUT_MIN_SAMPLES)
             sell_toxicity = markout_store.summary(MARKOUT_HORIZON_MS, side="sell", last_n=100, toxic_mean_bps=TOXIC_MARKOUT_MEAN_BPS, min_samples=TOXIC_MARKOUT_MIN_SAMPLES)
-
             net = session_net_pnl(fills, upnl)
             cooldown = post_fill_cooldown_active(fills, now)
             age = inventory_age_seconds(fills, now) if position else 0.0
@@ -464,26 +440,12 @@ def main() -> None:
                 price = float(order.get("limitPx", 0) or 0)
                 size = float(order.get("sz", 0) or 0)
                 created = int(order.get("timestamp", now) or now)
-                quality_store.open(
-                    Exposure(
-                        order_id,
-                        side,
-                        price,
-                        size,
-                        created,
-                        distance_from_touch_bps(best_bid, best_ask, side, price),
-                        queue_ahead_size(book, side, price),
-                    )
-                )
+                quality_store.open(Exposure(order_id, side, price, size, created, distance_from_touch_bps(best_bid, best_ask, side, price), queue_ahead_size(book, side, price)))
 
             quality = quality_store.quality(last_n=200)
             buy_quality = quality_store.quality(side="buy", last_n=200)
             sell_quality = quality_store.quality(side="sell", last_n=200)
-            learned_fill_multiplier = min(
-                empirical_fill_multiplier(quality),
-                max(0.35, (empirical_fill_multiplier(buy_quality) + empirical_fill_multiplier(sell_quality)) / 2.0),
-            )
-
+            learned_fill_multiplier = min(empirical_fill_multiplier(quality), max(0.35, (empirical_fill_multiplier(buy_quality) + empirical_fill_multiplier(sell_quality)) / 2.0))
             volatility = rms_returns_bps(list(mids))
             direction = directional_pressure_bps(list(mids))
             edge = profitability_edge(
@@ -543,30 +505,35 @@ def main() -> None:
                     else:
                         action = "retain_unsafe_grace"
             else:
-                size = dynamic_order_size(BASE_ORDER_SIZE, LOT_SIZE, edge.size_multiplier)
+                pair = adaptive_quote_pair(
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    fair_value=signal_l2.fair_value,
+                    inventory=szi,
+                    max_inventory=MAX_NET_SIZE,
+                    volatility_bps=volatility,
+                    bid_buffer_bps=bid_buffer,
+                    ask_buffer_bps=ask_buffer,
+                    edge=edge,
+                    base_half_spread_bps=LEVEL_SPREAD_BPS[0],
+                    round_trip_fee_bps=ROUND_TRIP_MAKER_FEE_BPS,
+                    minimum_profit_bps=MINIMUM_NET_PROFIT_BPS,
+                    base_size=BASE_ORDER_SIZE,
+                    lot_size=LOT_SIZE,
+                    inventory_skew_bps=INVENTORY_SKEW_BPS_AT_MAX,
+                    inventory_skew_power=INVENTORY_SKEW_POWER,
+                    fast_market_threshold_bps=FAST_MARKET_THRESHOLD_BPS,
+                )
                 desired: list[tuple[bool, float, float]] = []
-                if size < LOT_SIZE:
+                if pair.size < LOT_SIZE:
                     action = "edge_size_zero"
                 else:
-                    strategy_bid, strategy_ask = lighter_style_quotes(
-                        best_bid,
-                        best_ask,
-                        bid_size,
-                        ask_size,
-                        szi,
-                        MAX_NET_SIZE,
-                        volatility,
-                        bid_buffer + edge.bid_extra_bps,
-                        ask_buffer + edge.ask_extra_bps,
-                        required_edge_bps=edge.required_edge_bps,
-                        fair_value=signal_l2.fair_value,
-                    )
-                    bid, ask = passive_quotes(info, strategy_bid, strategy_ask)
+                    bid, ask = passive_quotes(info, pair.bid, pair.ask)
                     if not pause_bid:
-                        desired.append((True, size, bid))
+                        desired.append((True, pair.size, bid))
                     if not pause_ask:
-                        desired.append((False, size, ask))
-                    if mid * size > CAPITAL_BUDGET_USD:
+                        desired.append((False, pair.size, ask))
+                    if mid * pair.size > CAPITAL_BUDGET_USD:
                         desired = []
                         action = "capital_gate"
                 if opening_orders_match(orders, desired):
@@ -580,37 +547,32 @@ def main() -> None:
                     if desired:
                         action = "replace_quotes"
 
-            print(
-                json.dumps(
-                    {
-                        "event": "cycle",
-                        "mid": mid,
-                        "l2_fair": signal_l2.fair_value,
-                        "l2_spread_bps": signal_l2.spread_bps,
-                        "szi": szi,
-                        "net_pnl": net,
-                        "quote_action": action,
-                        "volatility_bps": volatility,
-                        "directional_bps": direction,
-                        "book_imbalance": signal_l2.imbalance,
-                        "required_edge_bps": edge.required_edge_bps,
-                        "edge_score": edge.score,
-                        "size_multiplier": edge.size_multiplier,
-                        "learned_fill_multiplier": learned_fill_multiplier,
-                        "pause_bid": pause_bid,
-                        "pause_ask": pause_ask,
-                        "markout_mean_bps": toxicity.mean_markout_bps,
-                        "buy_markout_mean_bps": buy_toxicity.mean_markout_bps,
-                        "sell_markout_mean_bps": sell_toxicity.mean_markout_bps,
-                        "fill_samples": quality.samples,
-                        "fill_rate": quality.fill_rate,
-                        "buy_fill_rate": buy_quality.fill_rate,
-                        "sell_fill_rate": sell_quality.fill_rate,
-                        "queue_ahead_ratio": quality.mean_queue_ahead_ratio,
-                    }
-                ),
-                flush=True,
-            )
+            print(json.dumps({
+                "event": "cycle",
+                "mid": mid,
+                "l2_fair": signal_l2.fair_value,
+                "l2_spread_bps": signal_l2.spread_bps,
+                "szi": szi,
+                "net_pnl": net,
+                "quote_action": action,
+                "volatility_bps": volatility,
+                "directional_bps": direction,
+                "book_imbalance": signal_l2.imbalance,
+                "required_edge_bps": edge.required_edge_bps,
+                "edge_score": edge.score,
+                "size_multiplier": edge.size_multiplier,
+                "learned_fill_multiplier": learned_fill_multiplier,
+                "pause_bid": pause_bid,
+                "pause_ask": pause_ask,
+                "markout_mean_bps": toxicity.mean_markout_bps,
+                "buy_markout_mean_bps": buy_toxicity.mean_markout_bps,
+                "sell_markout_mean_bps": sell_toxicity.mean_markout_bps,
+                "fill_samples": quality.samples,
+                "fill_rate": quality.fill_rate,
+                "buy_fill_rate": buy_quality.fill_rate,
+                "sell_fill_rate": sell_quality.fill_rate,
+                "queue_ahead_ratio": quality.mean_queue_ahead_ratio,
+            }), flush=True)
             for _ in range(REFRESH_SECONDS):
                 if not running:
                     break
