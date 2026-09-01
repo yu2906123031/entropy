@@ -18,9 +18,10 @@ class DegradationTests(unittest.TestCase):
         self.assertEqual(ctl.update(HealthSignal(toxic_bid=True)), StrategyState.ONE_SIDE)
         self.assertEqual(ctl.size_multiplier(), 0.5)
 
-    def test_both_sides_toxic_do_not_masquerade_as_one_side(self):
+    def test_both_sides_toxic_halt(self):
         ctl = DegradationController()
-        self.assertEqual(ctl.update(HealthSignal(toxic_bid=True, toxic_ask=True)), StrategyState.NORMAL)
+        self.assertEqual(ctl.update(HealthSignal(toxic_bid=True, toxic_ask=True)), StrategyState.HALTED)
+        self.assertEqual(ctl.size_multiplier(), 0.0)
 
     def test_recovery_is_hysteretic_all_the_way_to_normal(self):
         ctl = DegradationController(recovery_windows=2)
