@@ -50,9 +50,15 @@ def profitability_edge(
     sell_markout_mean_bps: float | None = None,
     sell_markout_negative_rate: float | None = None,
     fill_size_multiplier: float = 1.0,
+    funding_bps: float = 0.0,
     max_directional_bps: float = 30.0,
 ) -> EdgeDecision:
-    """Translate learned adverse selection into spread, size and side-specific controls."""
+    """Translate learned adverse selection, flow and funding into quote controls.
+
+    ``funding_bps`` is signed from the long holder's perspective: positive means
+    longs pay shorts. The absolute cost raises the common edge floor, while the
+    paying side gets an additional side-specific penalty.
+    """
     values = (
         volatility_bps,
         book_imbalance,
@@ -60,6 +66,7 @@ def profitability_edge(
         round_trip_fee_bps,
         minimum_profit_bps,
         fill_size_multiplier,
+        funding_bps,
     )
     if any(not math.isfinite(v) for v in values):
         raise ValueError("edge inputs must be finite")
@@ -73,9 +80,10 @@ def profitability_edge(
     volatility_buffer = max(0.0, volatility_bps) * 0.35
     imbalance_buffer = imbalance_mag * 8.0
     direction_buffer = direction_mag * 0.30
-    required = round_trip_fee_bps + minimum_profit_bps + toxicity_buffer + volatility_buffer + imbalance_buffer + direction_buffer
+    funding_buffer = abs(funding_bps)
+    required = round_trip_fee_bps + minimum_profit_bps + toxicity_buffer + volatility_buffer + imbalance_buffer + direction_buffer + funding_buffer
 
-    score = toxicity_buffer + volatility_buffer + imbalance_buffer + direction_buffer
+    score = toxicity_buffer + volatility_buffer + imbalance_buffer + direction_buffer + funding_buffer
     learned_multiplier = _clip(fill_size_multiplier, 0.20, 1.0)
     size_multiplier = _clip(1.0 / (1.0 + score / 12.0), 0.20, 1.0) * learned_multiplier
     size_multiplier = _clip(size_multiplier, 0.10, 1.0)
@@ -90,9 +98,12 @@ def profitability_edge(
     elif book_imbalance < 0:
         bid_extra += imbalance_extra
 
-    # Side-specific historical toxicity widens only the side that has been selected against.
     bid_extra += min(20.0, buy_adverse * 1.5 + max(0.0, buy_negative - 0.5) * 10.0)
     ask_extra += min(20.0, sell_adverse * 1.5 + max(0.0, sell_negative - 0.5) * 10.0)
+    if funding_bps > 0:
+        bid_extra += min(20.0, funding_bps)
+    elif funding_bps < 0:
+        ask_extra += min(20.0, -funding_bps)
 
     pause_bid = directional_bps <= -max_directional_bps or (book_imbalance <= -0.90 and volatility_bps >= 5.0)
     pause_ask = directional_bps >= max_directional_bps or (book_imbalance >= 0.90 and volatility_bps >= 5.0)
@@ -102,6 +113,10 @@ def profitability_edge(
         pause_ask = True
     if adverse_markout >= 10.0 and negative_rate >= 0.85:
         pause_bid = True
+        pause_ask = True
+    if funding_bps >= 25.0:
+        pause_bid = True
+    if funding_bps <= -25.0:
         pause_ask = True
 
     return EdgeDecision(required, size_multiplier, bid_extra, ask_extra, pause_bid, pause_ask, score)
