@@ -21,6 +21,7 @@ class ActionResult:
     accepted: bool
     detail: str
     order_id: int | None = None
+    category: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -30,12 +31,26 @@ class ExecutionResult:
     cancel_results: tuple[ActionResult, ...]
     place_results: tuple[ActionResult, ...]
     remaining_cancel_ids: tuple[int, ...] = ()
+    placement_state: str = "none"
 
 
 class Venue(Protocol):
     def cancel_orders(self, order_ids: tuple[int, ...]) -> tuple[ActionResult, ...]: ...
     def place_orders(self, places: tuple[Place, ...]) -> tuple[ActionResult, ...]: ...
     def open_order_ids(self) -> set[int]: ...
+
+
+def _placement_state(expected: int, results: tuple[ActionResult, ...]) -> str:
+    if expected == 0:
+        return "none"
+    accepted = sum(item.accepted for item in results)
+    if accepted == expected and len(results) == expected:
+        return "full"
+    if accepted == 0 and len(results) == expected:
+        return "zero"
+    if accepted > 0:
+        return "partial"
+    return "unknown"
 
 
 def execute_plan(
@@ -47,12 +62,7 @@ def execute_plan(
     confirmation: str = "",
     allow_opening: bool = True,
 ) -> ExecutionResult:
-    """Execute a plan with a verified cancel-first barrier.
-
-    Dry-run performs no Venue calls. Live execution requires two independent
-    gates. Opening orders are sent only after every requested cancellation is
-    accepted and absent from a fresh open-order snapshot.
-    """
+    """Execute a plan with a verified cancel-first barrier and explicit partial-state reporting."""
     if mode is ExecutionMode.DRY_RUN:
         return ExecutionResult(mode, "planned_only", (), ())
     if not live_enabled or confirmation != LIVE_CONFIRMATION:
@@ -72,6 +82,7 @@ def execute_plan(
         return ExecutionResult(mode, "unsafe_non_post_only", cancel_results, ())
 
     place_results = venue.place_orders(plan.places)
-    if len(place_results) != len(plan.places) or any(not result.accepted for result in place_results):
-        return ExecutionResult(mode, "place_incomplete", cancel_results, place_results)
-    return ExecutionResult(mode, "executed", cancel_results, place_results)
+    state = _placement_state(len(plan.places), place_results)
+    if state != "full":
+        return ExecutionResult(mode, "place_incomplete", cancel_results, place_results, placement_state=state)
+    return ExecutionResult(mode, "executed", cancel_results, place_results, placement_state="full")
