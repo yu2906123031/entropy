@@ -18,6 +18,7 @@ class ToxicityTests(unittest.TestCase):
         self.assertEqual(len(tracker.observe(999, 99.9)), 0)
         first = tracker.observe(1000, 99.9)
         self.assertEqual(len(first), 1)
+        self.assertEqual(first[0].side, "buy")
         self.assertEqual(len(tracker.observe(2000, 99.8)), 0)
         second = tracker.observe(5000, 99.7)
         self.assertEqual(len(second), 1)
@@ -28,24 +29,28 @@ class ToxicityTests(unittest.TestCase):
         for i in range(10):
             tracker.add_fill(FillObservation(f"t{i}", "buy", 100.0, 0.1, i))
         tracker.observe(2000, 99.9)
-        summary = tracker.summary(1000, toxic_mean_bps=-2.0, min_samples=10)
+        summary = tracker.summary(1000, side="buy", toxic_mean_bps=-2.0, min_samples=10)
         self.assertTrue(summary.toxic)
         self.assertLess(summary.mean_markout_bps, 0)
         self.assertEqual(summary.negative_rate, 1.0)
 
-    def test_store_is_restart_safe_and_idempotent(self):
+    def test_store_is_restart_safe_idempotent_and_side_aware(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "markouts.sqlite3"
             tracker = MarkoutTracker(horizons_ms=(5000,))
-            tracker.add_fill(FillObservation("t1", "buy", 100.0, 0.1, 0))
+            tracker.add_fill(FillObservation("buy1", "buy", 100.0, 0.1, 0))
+            tracker.add_fill(FillObservation("sell1", "sell", 100.0, 0.1, 0))
             produced = tracker.observe(5000, 99.9)
             first = MarkoutStore(path)
-            self.assertEqual(first.record(produced, recorded_at_ms=5000), 1)
+            self.assertEqual(first.record(produced, recorded_at_ms=5000), 2)
             self.assertEqual(first.record(produced, recorded_at_ms=6000), 0)
             restarted = MarkoutStore(path)
-            summary = restarted.summary(5000, last_n=10, min_samples=1, toxic_mean_bps=-2.0)
-            self.assertEqual(summary.count, 1)
-            self.assertTrue(summary.toxic)
+            buy = restarted.summary(5000, side="buy", last_n=10, min_samples=1, toxic_mean_bps=-2.0)
+            sell = restarted.summary(5000, side="sell", last_n=10, min_samples=1, toxic_mean_bps=-2.0)
+            self.assertEqual(buy.count, 1)
+            self.assertEqual(sell.count, 1)
+            self.assertTrue(buy.toxic)
+            self.assertFalse(sell.toxic)
 
 
 if __name__ == "__main__":
