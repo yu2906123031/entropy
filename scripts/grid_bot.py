@@ -1,6 +1,7 @@
 """Small live HYPE grid with Entropy attribution and conservative risk exits."""
 import getpass
 import json
+import os
 import signal
 import time
 from pathlib import Path
@@ -14,7 +15,10 @@ ACCOUNT = "0x78605485604BA45ce0eF860DB1594ec810154477"
 AGENT = "0x3B4347B99BB749eBdD6DE720736796E1b7Dfe4a6"
 BUILDER = {"b": "0xcd254d2a328f7f67c7c6fef930a4757516f7b601", "f": 0}
 KEYSTORE = Path(__file__).resolve().parents[1] / "secrets" / "agent-keystore.json"
-LEVELS = [52.44, 53.61, 54.77, 55.94, 57.10, 58.27, 59.43, 60.60, 61.76, 62.93, 64.09]
+# Long-biased grid re-anchored after the 2026-08-20 breakout.
+# The engine seeds bids only. A filled bid creates a reduce-only take-profit
+# one level higher, so an empty account can never open a short.
+LEVELS = [63.50, 64.70, 65.90, 67.10, 68.30, 69.50, 70.70, 71.90, 73.10, 74.30, 75.50]
 LOWER, UPPER = LEVELS[0], LEVELS[-1]
 SIZE = 0.20
 MAX_POSITION = 1.001
@@ -47,7 +51,9 @@ def flatten(exchange, info):
         print("FLATTEN", exchange.market_close("HYPE", abs(float(p["szi"])), None, 0.02, builder=BUILDER))
 
 def place(exchange, is_buy, price):
-    result = exchange.order("HYPE", is_buy, SIZE, price, {"limit": {"tif": "Alo"}}, False, builder=BUILDER)
+    # Offers are always reduce-only: the strategy may realize accumulated longs,
+    # while the exchange itself blocks any accidental short exposure.
+    result = exchange.order("HYPE", is_buy, SIZE, price, {"limit": {"tif": "Alo"}}, not is_buy, builder=BUILDER)
     print("PLACE", "BUY" if is_buy else "SELL", price, json.dumps(result))
     status = result.get("response", {}).get("data", {}).get("statuses", [{}])[0]
     if isinstance(status, dict) and status.get("error"):
@@ -65,8 +71,22 @@ def cancel_at(exchange, info, price):
 def nearest_index(price):
     return min(range(len(LEVELS)), key=lambda i: abs(LEVELS[i] - price))
 
+def read_password():
+    credential_path = os.environ.get("ENTROPY_CREDENTIAL_FILE")
+    if credential_path:
+        return Path(credential_path).read_text(encoding="utf-8").rstrip("\r\n")
+    return getpass.getpass("Agent keystore password (hidden): ")
+
+
+def confirm_start():
+    unattended_confirmation = os.environ.get("ENTROPY_START_CONFIRMATION")
+    if unattended_confirmation is not None:
+        return unattended_confirmation
+    return input('Type exactly "START GRID": ')
+
+
 def main():
-    password = getpass.getpass("Agent keystore password (hidden): ")
+    password = read_password()
     key = Account.decrypt(json.loads(KEYSTORE.read_text(encoding="utf-8")), password)
     agent = Account.from_key(key)
     if agent.address.lower() != AGENT.lower():
@@ -75,25 +95,40 @@ def main():
     role = info.user_role(agent.address)
     if role.get("role") != "agent" or role.get("data", {}).get("user", "").lower() != ACCOUNT.lower():
         raise SystemExit(f"Agent authorization mismatch: {role}")
-    if position(info):
-        raise SystemExit("Refusing startup with an existing HYPE position")
-    if any(o.get("coin") == "HYPE" for o in info.open_orders(ACCOUNT)):
-        raise SystemExit("Refusing startup with existing HYPE orders")
 
     exchange = Exchange(agent, constants.MAINNET_API_URL, account_address=ACCOUNT, timeout=30)
+    existing_position = position(info)
+    existing_orders = [o for o in info.open_orders(ACCOUNT) if o.get("coin") == "HYPE"]
+    recover = os.environ.get("ENTROPY_RECOVER_ON_START") == "1"
+    if existing_position or existing_orders:
+        if not recover:
+            if existing_position:
+                raise SystemExit("Refusing startup with an existing HYPE position")
+            raise SystemExit("Refusing startup with existing HYPE orders")
+        print("RECOVERY START", {"position": existing_position, "orders": len(existing_orders)})
+        cancel_hype(exchange, info)
+        flatten(exchange, info)
+        for _ in range(30):
+            if not position(info) and not any(o.get("coin") == "HYPE" for o in info.open_orders(ACCOUNT)):
+                break
+            time.sleep(1)
+        else:
+            raise SystemExit("Recovery failed to reach an empty HYPE account state")
+        print("RECOVERY COMPLETE")
+
     exchange.update_leverage(2, "HYPE", True)
     initial_tids = {x["tid"] for x in info.user_fills(ACCOUNT)}
     print(json.dumps({"range": [LOWER, UPPER], "levels": LEVELS, "size": SIZE, "leverage": 2, "maxPosition": MAX_POSITION, "builder": BUILDER}, indent=2))
-    if input('Type exactly "START GRID": ') != "START GRID":
+    if confirm_start() != "START GRID":
         raise SystemExit("Grid not started")
 
     signal.signal(signal.SIGINT, stop_requested)
     signal.signal(signal.SIGTERM, stop_requested)
     try:
-        for px in LEVELS[:5]:
+        for px in LEVELS:
+            if px >= float(info.all_mids()["HYPE"]):
+                continue
             place(exchange, True, px)
-        for px in LEVELS[6:]:
-            place(exchange, False, px)
         print("GRID RUNNING - keep this window open; Ctrl+C performs safe shutdown")
 
         seen = initial_tids
