@@ -46,6 +46,14 @@ printf '%s\n' "$GIT_COMMIT" > "$STAGE/COMMIT"
 chmod -R a-w "$STAGE/app" "$STAGE/venv" "$STAGE/COMMIT"
 mv "$STAGE" "$RELEASE"
 trap - EXIT
+# mktemp creates STAGE as 0700. The immutable release remains root-owned,
+# while the dedicated service account needs read/traverse and executable bits.
+chown -R root:root "$RELEASE"
+find "$RELEASE" -type d -exec chmod 0755 {} +
+find "$RELEASE/app" -type f -exec chmod 0644 {} +
+find "$RELEASE/venv" -type f -exec chmod 0644 {} +
+find "$RELEASE/venv/bin" -type f -exec chmod 0755 {} +
+chmod 0444 "$RELEASE/COMMIT"
 ln -sfn "$RELEASE" "$PREFIX/.current-$GIT_COMMIT"
 mv -Tf "$PREFIX/.current-$GIT_COMMIT" "$PREFIX/current"
 
