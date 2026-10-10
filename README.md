@@ -105,8 +105,10 @@ asset_id = 100000 + perp_dex_index * 10000 + index_in_meta
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install --require-hashes -r requirements.lock
-pip install -e ".[dev]"   # optional, for pytest
+./deploy/build-wheelhouse.sh ./wheelhouse
+PIP_NO_INDEX=1 pip install --no-index --find-links ./wheelhouse \
+  --require-hashes --only-binary=:all: -r requirements.lock
+export PYTHONPATH="$PWD"
 
 cp .env.example .env      # edit locally; never commit secrets
 
@@ -126,7 +128,10 @@ python -m entropy_bot cancel          # cancel this bot's cloIDs (needs key)
 git clone https://github.com/a3165458/entropy-bot
 cd entropy-bot
 python3 -m venv .venv && source .venv/bin/activate
-pip install --require-hashes -r requirements.lock
+./deploy/build-wheelhouse.sh ./wheelhouse
+PIP_NO_INDEX=1 pip install --no-index --find-links ./wheelhouse \
+  --require-hashes --only-binary=:all: -r requirements.lock
+export PYTHONPATH="$PWD"
 cp .env.example .env
 # set LIVE=1
 # set HYPERLIQUID_PRIVATE_KEY to the API/agent key (0x…)
@@ -148,14 +153,18 @@ If the process dies without a clean stop, `scheduleCancel` fires and cancels **e
 
 ### Immutable release install
 
-`deploy/install-release.sh <commit>` archives the exact commit into
+`deploy/build-wheelhouse.sh <directory>` downloads every locked wheel for the
+current Python/platform while checking `requirements.lock` hashes. Transfer that
+directory with the source for an air-gapped deployment. `deploy/install-release.sh
+<commit>` archives the exact commit into
 `/opt/entropy-bot/releases/<commit>`, creates and verifies its virtualenv, runs
 the full offline test suite, marks the app and virtualenv read-only, atomically
 updates `/opt/entropy-bot/current`, and installs both systemd units. It leaves
 both units stopped and disabled.
 
 ```bash
-sudo ./deploy/install-release.sh "$(git rev-parse HEAD)"
+./deploy/build-wheelhouse.sh ./wheelhouse
+sudo WHEELHOUSE="$PWD/wheelhouse" ./deploy/install-release.sh "$(git rev-parse HEAD)"
 sudo systemctl daemon-reload
 systemctl is-enabled entropy-guardian.service entropy-live.service  # expected: disabled
 systemctl is-active entropy-guardian.service entropy-live.service   # expected: inactive

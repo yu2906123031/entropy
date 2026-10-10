@@ -6,3 +6,4 @@ __pycache__/
 *.cred
 *.key
 *.sqlite3
+wheelhouse/

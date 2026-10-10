@@ -15,11 +15,17 @@ guardian session cannot authorize order placement.
 ```bash
 cd /opt/entropy-bot/releases/NEW
 python3 -m venv .venv
-.venv/bin/pip install --require-hashes -r requirements.lock  # when maintained by deployment
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m compileall -q entropy_bot tests
-.venv/bin/pytest -q
+PIP_NO_INDEX=1 .venv/bin/pip install --no-index --find-links /srv/entropy-wheelhouse \
+  --require-hashes --only-binary=:all: -r requirements.lock
+PYTHONPATH="$PWD" .venv/bin/python -m compileall -q entropy_bot tests
+PYTHONPATH="$PWD" .venv/bin/python -m pytest -q
+PYTHONPATH="$PWD" .venv/bin/python -m entropy_bot --help
 ```
+
+Build `/srv/entropy-wheelhouse` on an online host with the same Python version,
+OS, and architecture by running `deploy/build-wheelhouse.sh
+/srv/entropy-wheelhouse`. Production installation always resolves from this
+wheelhouse with index access disabled.
 
 Required live configuration:
 
