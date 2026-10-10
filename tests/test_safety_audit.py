@@ -11,7 +11,7 @@ from entropy_bot.cli import build_parser
 from entropy_bot.config import load_settings
 from entropy_bot.errors import LiveGuardError
 from entropy_bot.fees import estimate_fees, estimate_from_settings
-from entropy_bot.guardian import cancel_ebot
+from entropy_bot.guardian import cancel_ebot, final_return_code, health_transition
 from entropy_bot.intents import IntentWAL
 from entropy_bot.live import LiveQuoter, RestSlot, apply_open_orders
 from entropy_bot.orders import action_statuses_ok
@@ -194,3 +194,18 @@ def test_guardian_cancels_all_allowed_markets_despite_coin_scope():
     client = Client()
     assert cancel_ebot(client, signer, markets)
     assert len(client.payload["pairs"]) == 2
+
+
+def test_guardian_transient_failure_recovers_and_consecutive_failures_exit():
+    rc, failures, exhausted = health_transition(False, 0)
+    assert (rc, failures, exhausted) == (2, 1, False)
+    assert health_transition(True, failures) == (0, 0, False)
+    state = (0, 0, False)
+    for _ in range(3):
+        state = health_transition(False, state[1])
+    assert state == (2, 3, True)
+
+
+def test_guardian_final_cancel_failure_always_returns_nonzero():
+    assert final_return_code(0, False) == 2
+    assert final_return_code(2, True) == 2

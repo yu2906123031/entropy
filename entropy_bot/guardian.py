@@ -21,6 +21,16 @@ log = logging.getLogger("entropy_bot.guardian")
 MAX_CONSECUTIVE_FAILURES = 3
 
 
+def health_transition(ok: bool, failures: int) -> tuple[int, int, bool]:
+    """Return rc, consecutive failures and whether supervision should restart."""
+    count = 0 if ok else failures + 1
+    return (0 if ok else 2), count, count >= MAX_CONSECUTIVE_FAILURES
+
+
+def final_return_code(rc: int, cancel_ok: bool) -> int:
+    return rc if cancel_ok else 2
+
+
 def lease_fresh(path: str, account: str, max_age: float, now: float) -> bool:
     try:
         row = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
@@ -91,13 +101,12 @@ def run_guardian(settings: Settings, *, seconds: float | None = None) -> int:
                 ok = True
                 if not lease_fresh(settings.guardian_lease_path, signer.account, settings.guardian_max_age, now):
                     ok = cancel_ebot(client, signer, markets)
-                failures = 0 if ok else failures + 1
-                rc = 0 if ok else 2
+                rc, failures, exhausted = health_transition(ok, failures)
                 atomic_json(settings.guardian_ready_path, {
                     "ready": ok, "heartbeat": now, "account": signer.account, "dex": "io",
                     "pid": pid, "boot_id": boot_id, "start_id": start_id, "session_token": token,
                 })
-                if failures >= MAX_CONSECUTIVE_FAILURES:
+                if exhausted:
                     break
                 time.sleep(settings.guardian_poll_s)
     finally:
@@ -105,7 +114,6 @@ def run_guardian(settings: Settings, *, seconds: float | None = None) -> int:
             "ready": False, "heartbeat": time.time(), "account": signer.account, "dex": "io",
             "pid": pid, "boot_id": boot_id, "start_id": start_id, "session_token": token,
         })
-        if not cancel_ebot(client, signer, markets):
-            rc = 2
+        rc = final_return_code(rc, cancel_ebot(client, signer, markets))
         client.close()
     return rc

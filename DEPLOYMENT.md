@@ -5,6 +5,11 @@ cancel-on-failure control for accounts that cannot arm Hyperliquid
 `scheduleCancel`; the trading process refuses every placement until the
 ready heartbeat is fresh.
 
+The guardian atomically creates `/run/entropy-bot/guardian-session.token` at
+each start. Readiness carries that token plus PID, boot ID, and process start
+identity. The live process validates all four fields, so readiness from an old
+guardian session cannot authorize order placement.
+
 ## Preflight (offline)
 
 ```bash
