@@ -86,7 +86,6 @@ class BookFeed:
             self._ws.run_forever(
                 http_proxy_host="",
                 http_proxy_port=0,
-                redirect_limit=0,
                 sslopt={"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": certifi.where()},
             )
             if self._stop.is_set():
