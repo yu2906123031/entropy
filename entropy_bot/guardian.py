@@ -9,6 +9,7 @@ import secrets
 import signal
 import time
 from pathlib import Path
+from typing import Callable
 
 from entropy_bot.coins import ALLOWED_COINS, ALLOWED_DEX
 from entropy_bot.config import Settings, require_signer
@@ -77,10 +78,17 @@ def cancel_ebot(client: InfoClient, signer: LiveSigner, markets: dict) -> bool:
     return action_statuses_ok(resp, len(pairs))
 
 
-def run_guardian(settings: Settings, *, seconds: float | None = None) -> int:
+def run_guardian(
+    settings: Settings,
+    *,
+    seconds: float | None = None,
+    client_factory: Callable[[str], InfoClient] = InfoClient,
+    signer_factory: Callable[..., LiveSigner] = LiveSigner,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
     require_signer(settings)
-    signer = LiveSigner(settings.private_key or "", settings.account, nonce_dir=settings.state_dir)
-    client = InfoClient(settings.api_url)
+    signer = signer_factory(settings.private_key or "", settings.account, nonce_dir=settings.state_dir)
+    client = client_factory(settings.api_url)
     stop = {"flag": False}
     signal.signal(signal.SIGINT, lambda *_: stop.__setitem__("flag", True))
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
@@ -108,7 +116,7 @@ def run_guardian(settings: Settings, *, seconds: float | None = None) -> int:
                 })
                 if exhausted:
                     break
-                time.sleep(settings.guardian_poll_s)
+                sleep(settings.guardian_poll_s)
     finally:
         atomic_json(settings.guardian_ready_path, {
             "ready": False, "heartbeat": time.time(), "account": signer.account, "dex": "io",

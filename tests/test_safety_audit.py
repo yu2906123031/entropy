@@ -157,11 +157,15 @@ def test_fee_from_settings_forces_gross_tier0():
     assert fee.maker_rebate_bps is None
 
 
-def test_flat_leverage_is_unobservable_but_existing_rows_are_strict():
+def test_flat_leverage_requires_current_update_proof_and_existing_rows_are_strict():
     q = object.__new__(LiveQuoter)
     q.settings = SimpleNamespace(max_leverage=1)
     q.markets = {"io:SNDK": SimpleNamespace(max_leverage=20)}
-    assert q._isolated_leverage_verified({"assetPositions": []})
+    q.leverage_proof = {}
+    assert not q._isolated_leverage_verified({"assetPositions": []})
+    assert not q._isolated_leverage_verified({"assetPositions": []}, allow_flat_proof=True)
+    q.leverage_proof = {"io:SNDK": {"value": 1}}
+    assert q._isolated_leverage_verified({"assetPositions": []}, allow_flat_proof=True)
     assert q._isolated_leverage_verified({"assetPositions": [{"position": {
         "coin": "io:SNDK", "leverage": {"type": "isolated", "value": 1}}}]})
     assert not q._isolated_leverage_verified({"assetPositions": [{"position": {

@@ -14,6 +14,7 @@ import math
 import signal
 import threading
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -301,6 +302,8 @@ class LiveQuoter:
     open_orders_known: bool = True
     position_known: bool = False
     external_orders: list[dict[str, Any]] = field(default_factory=list)
+    leverage_proof: dict[str, dict[str, Any]] = field(default_factory=dict)
+    leverage_blocked: bool = False
 
     def __post_init__(self) -> None:
         if not self.notional:
@@ -407,6 +410,7 @@ class LiveQuoter:
             log.warning("fill-diag markout: %s", exc)
 
     def bootstrap_isolated(self) -> None:
+        proofs: dict[str, dict[str, Any]] = {}
         for market in self.markets.values():
             fee = estimate_from_settings(market, self.settings)
             maker_usd = fee_for_notional(fee, self.notional, maker=True)
@@ -424,11 +428,22 @@ class LiveQuoter:
             log.info("isolated leverage %s -> %s", market.coin, resp)
             if not action_ok(resp):
                 raise LiveGuardError(f"leverage update rejected for {market.coin}")
+            proofs[market.coin] = {
+                "account": self.signer.account,
+                "coin": market.coin,
+                "value": min(self.settings.max_leverage, market.max_leverage),
+                "response_timestamp": time.time(),
+                "response": resp,
+            }
+        self.leverage_proof = proofs
+        atomic_json(Path(self.settings.state_dir) / "leverage-proof.json", {
+            "account": self.signer.account, "dex": ALLOWED_DEX, "proofs": proofs,
+        })
         state = self.client.clearinghouse_state(self.signer.account, ALLOWED_DEX, optional=True)
-        if not self._isolated_leverage_verified(state):
+        if not self._isolated_leverage_verified(state, allow_flat_proof=True):
             raise LiveGuardError("isolated leverage verification failed")
 
-    def _isolated_leverage_verified(self, state: Any) -> bool:
+    def _isolated_leverage_verified(self, state: Any, *, allow_flat_proof: bool = False) -> bool:
         if not isinstance(state, dict):
             return False
         found: dict[str, tuple[str, int]] = {}
@@ -447,9 +462,11 @@ class LiveQuoter:
             except (TypeError, ValueError):
                 return False
         if not found:
-            log.warning("leverage state unobservable while flat; accepted updateLeverage plus 1x risk cap applies")
-            return True
-        return len(found) == len(self.markets) and all(
+            if allow_flat_proof:
+                log.warning("flat account: persisting exchange-accepted updateLeverage response proof")
+                return all(coin in self.leverage_proof for coin in self.markets)
+            return False
+        return all(
             found[coin] == ("isolated", min(self.settings.max_leverage, market.max_leverage))
             for coin, market in self.markets.items()
             if coin in found
@@ -481,7 +498,27 @@ class LiveQuoter:
         self.pos = parsed
         self.last_pos_poll = now
         self.position_known = True
+        if any(abs(value) > 0 for value in parsed.values()) and not self._isolated_leverage_verified(state):
+            self.leverage_blocked = True
+            log.critical("authoritative position leverage mismatch; opening quotes blocked")
         return True
+
+    def enforce_position_leverage(self) -> None:
+        """Flatten immediately and terminate the session after authoritative mismatch."""
+        if not self.leverage_blocked:
+            return
+        for coin, size in self.pos.items():
+            if abs(size) <= 0:
+                continue
+            self.cancel_coin_rests(refetch=True, only_coin=coin)
+            top = self.book_for(coin, self._feed)
+            if top is None:
+                continue
+            self.pos_since[coin] = time.time() - 16.0
+            plan = self.plan_for(coin, top)
+            if plan.take:
+                self._place(coin, plan)
+        raise LiveGuardError("position leverage mismatch; emergency flatten attempted")
 
     def guardian_ready(self) -> bool:
         return fresh_guardian(self.settings.guardian_ready_path, self.signer.account,
@@ -731,6 +768,8 @@ class LiveQuoter:
     def _place(self, coin: str, plan: QuotePlan) -> dict[str, Any] | None:
         if not plan.intents:
             return None
+        if self.leverage_blocked and not plan.take:
+            return {"blocked": "leverageMismatch"}
         if not self.open_orders_known or self.external_orders:
             log.warning("refuse placement %s; open-order state unknown", coin)
             return {"blocked": "openOrdersUnknown"}
@@ -990,6 +1029,7 @@ class LiveQuoter:
         except Exception as exc:  # noqa: BLE001
             log.warning("position poll: %s", exc)
             self.position_known = False
+        self.enforce_position_leverage()
         try:
             self.poll_user_fills()
         except Exception as exc:  # noqa: BLE001

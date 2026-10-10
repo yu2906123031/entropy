@@ -146,6 +146,25 @@ python -m entropy_bot live
 
 If the process dies without a clean stop, `scheduleCancel` fires and cancels **every** resting order on that master.
 
+### Immutable release install
+
+`deploy/install-release.sh <commit>` archives the exact commit into
+`/opt/entropy-bot/releases/<commit>`, creates and verifies its virtualenv, runs
+the full offline test suite, marks the app and virtualenv read-only, atomically
+updates `/opt/entropy-bot/current`, and installs both systemd units. It leaves
+both units stopped and disabled.
+
+```bash
+sudo ./deploy/install-release.sh "$(git rev-parse HEAD)"
+sudo systemctl daemon-reload
+systemctl is-enabled entropy-guardian.service entropy-live.service  # expected: disabled
+systemctl is-active entropy-guardian.service entropy-live.service   # expected: inactive
+```
+
+Keep `/etc/entropy-bot/entropy.env` and encrypted credentials outside every
+release directory. Starting or enabling either unit remains a separate,
+explicit production action.
+
 ### Config (env / `.env`)
 
 | Variable | Default | Notes |
