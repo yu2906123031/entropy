@@ -74,6 +74,8 @@ class Settings:
     info_cooldown_base_s: float = 15.0
     info_cooldown_max_s: float = 120.0
     min_exit_edge_ticks: int = DEFAULT_MIN_EXIT_EDGE_TICKS
+    quote_notional_min_usd: float | None = None
+    quote_notional_max_usd: float | None = None
 
     @property
     def paper(self) -> bool:
@@ -132,6 +134,10 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
     coins = validate_coin_list(part.strip() for part in coins_raw.split(",") if part.strip())
     try:
         notional = float(os.environ.get("QUOTE_NOTIONAL_USD", DEFAULT_NOTIONAL))
+        notional_min_raw = _optional_env("QUOTE_NOTIONAL_MIN_USD")
+        notional_max_raw = _optional_env("QUOTE_NOTIONAL_MAX_USD")
+        notional_min = float(notional_min_raw) if notional_min_raw is not None else notional
+        notional_max = float(notional_max_raw) if notional_max_raw is not None else notional
         offset = int(os.environ.get("QUOTE_OFFSET_TICKS", DEFAULT_OFFSET_TICKS))
         max_lev = int(os.environ.get("MAX_LEVERAGE", DEFAULT_MAX_LEVERAGE))
         fee_tier = int(os.environ.get("FEE_TIER", DEFAULT_FEE_TIER))
@@ -168,13 +174,15 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         min_exit_edge_ticks = int(os.environ.get("MIN_EXIT_EDGE_TICKS", DEFAULT_MIN_EXIT_EDGE_TICKS))
     except ValueError as exc:
         raise ConfigError(f"invalid numeric config: {exc}") from exc
-    floats = (notional, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
+    floats = (notional, notional_min, notional_max, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
     if rebate_bps is not None:
         floats += (rebate_bps,)
     if not all(math.isfinite(value) for value in floats):
         raise ConfigError("numeric config values must be finite")
     if notional <= 0 or offset < 0 or max_lev < 1:
         raise ConfigError("QUOTE_NOTIONAL_USD, QUOTE_OFFSET_TICKS, MAX_LEVERAGE must be positive")
+    if notional_min < MIN_ORDER_USD or notional_max < notional_min:
+        raise ConfigError("quote notional range must satisfy $10 <= MIN <= MAX")
     if min_replace_s < 0:
         raise ConfigError("MIN_REPLACE_S must be >= 0")
     if guardian_max_age <= 0 or guardian_poll_s <= 0:
@@ -213,6 +221,8 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         account=_optional_env("HYPERLIQUID_ACCOUNT"),
         coins=coins,
         quote_notional_usd=notional,
+        quote_notional_min_usd=notional_min,
+        quote_notional_max_usd=notional_max,
         quote_offset_ticks=offset,
         max_leverage=max_lev,
         api_url=api_url.rstrip("/"),

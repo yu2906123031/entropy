@@ -152,6 +152,23 @@ def test_ws_fill_marks_position_unknown_for_immediate_reconcile(tmp_path):
     assert q.position_known
 
 
+def test_opening_notional_is_sampled_inside_configured_range():
+    q = object.__new__(LiveQuoter)
+    q.settings = SimpleNamespace(
+        quote_notional_usd=25,
+        quote_notional_min_usd=20,
+        quote_notional_max_usd=30,
+    )
+    q._notional_rng = __import__("random").Random(7)
+    q.notional = 0
+    values = []
+    for _ in range(20):
+        q._sample_opening_notional()
+        values.append(q.notional)
+    assert all(20 <= value <= 30 for value in values)
+    assert len(set(values)) > 1
+
+
 def test_deadman_unavailable_uses_long_retry_interval(tmp_path, monkeypatch):
     class Client:
         def post_exchange(self, _payload): return {"status": "err"}

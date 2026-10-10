@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import signal
 import threading
 import time
@@ -331,6 +332,7 @@ class LiveQuoter:
     _uncertain_logged: bool = False
     _last_safety_cancel: float = 0.0
     _fill_reconcile_pending: bool = False
+    _notional_rng: random.Random = field(default_factory=random.SystemRandom, repr=False)
 
     def __post_init__(self) -> None:
         if not self.notional:
@@ -352,6 +354,13 @@ class LiveQuoter:
             self._replace_skip_logged = {coin: False for coin in coins}
         if self.diag is None:
             self.diag = FillDiagnostics(coins)
+
+    def _sample_opening_notional(self) -> None:
+        low = getattr(self.settings, "quote_notional_min_usd", None)
+        high = getattr(self.settings, "quote_notional_max_usd", None)
+        low = live_notional(self.settings) if low is None else float(low)
+        high = low if high is None else float(high)
+        self.notional = round(self._notional_rng.uniform(low, high), 2)
 
     def _in_weight_backoff(self) -> bool:
         return time.time() < self._weight_backoff_until
@@ -957,6 +966,8 @@ class LiveQuoter:
         if not self.refresh_positions():
             self.cancel_coin_rests(refetch=False, only_coin=coin)
             return
+        if abs(self.pos.get(coin, 0.0)) <= 0 and not self._has_rest(coin):
+            self._sample_opening_notional()
         plan = self.plan_for(coin, top)
         key = plan.key()
 
