@@ -12,8 +12,8 @@ User=entropy-bot
 Group=entropy-bot
 WorkingDirectory=/opt/entropy-bot/current/app
 EnvironmentFile=/etc/entropy-bot/entropy.env
-LoadCredentialEncrypted=keystore-password:/etc/credstore.encrypted/entropy-grid.cred
-Environment=ENTROPY_CREDENTIAL_FILE=%d/keystore-password
+LoadCredentialEncrypted=cred:/etc/credstore.encrypted/entropy-grid.cred
+Environment=ENTROPY_CREDENTIAL_FILE=%d/cred
 Environment=COINS=io:SNDK
 Environment=QUOTE_NOTIONAL_USD=12
 Environment=MAX_LEVERAGE=1

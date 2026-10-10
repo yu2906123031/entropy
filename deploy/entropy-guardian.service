@@ -11,8 +11,8 @@ User=entropy-bot
 Group=entropy-bot
 WorkingDirectory=/opt/entropy-bot/current/app
 EnvironmentFile=/etc/entropy-bot/entropy.env
-LoadCredentialEncrypted=keystore-password:/etc/credstore.encrypted/entropy-grid.cred
-Environment=ENTROPY_CREDENTIAL_FILE=%d/keystore-password
+LoadCredentialEncrypted=cred:/etc/credstore.encrypted/entropy-grid.cred
+Environment=ENTROPY_CREDENTIAL_FILE=%d/cred
 Environment=GUARDIAN_TOKEN_PATH=/run/entropy-bot/guardian-session.token
 ExecStart=/opt/entropy-bot/current/venv/bin/python -m entropy_bot guardian
 Restart=on-failure
