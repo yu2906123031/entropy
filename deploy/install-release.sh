@@ -23,7 +23,7 @@ trap cleanup EXIT
 install -d -m 0755 "$STAGE/app"
 git archive "$GIT_COMMIT" | tar -x -C "$STAGE/app"
 "$PYTHON" -m venv "$STAGE/venv"
-"$STAGE/venv/bin/python" -m pip install --disable-pip-version-check -r "$STAGE/app/requirements.txt"
+"$STAGE/venv/bin/python" -m pip install --disable-pip-version-check --require-hashes -r "$STAGE/app/requirements.lock"
 "$STAGE/venv/bin/python" -m pip install --disable-pip-version-check "$STAGE/app[dev]"
 "$STAGE/venv/bin/python" -m compileall -q "$STAGE/app/entropy_bot"
 "$STAGE/venv/bin/python" -m pytest -q "$STAGE/app/tests"

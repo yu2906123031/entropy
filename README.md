@@ -105,7 +105,7 @@ asset_id = 100000 + perp_dex_index * 10000 + index_in_meta
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 pip install -e ".[dev]"   # optional, for pytest
 
 cp .env.example .env      # edit locally; never commit secrets
@@ -126,7 +126,7 @@ python -m entropy_bot cancel          # cancel this bot's cloIDs (needs key)
 git clone https://github.com/a3165458/entropy-bot
 cd entropy-bot
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 cp .env.example .env
 # set LIVE=1
 # set HYPERLIQUID_PRIVATE_KEY to the API/agent key (0x…)
