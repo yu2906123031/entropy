@@ -1,6 +1,6 @@
 """Signed L1 order / cancel payloads.
 
-Two-sided maker quotes stay ALO. Reduce-only flatten ≥15s may use IOC.
+Two-sided maker quotes stay ALO. Timed reduce-only flatten may use IOC.
 Builder is always Entropy (fee 0) so the rebate path matches the userscript.
 
 Agent vs master (official SDK, not a guess):

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import requests
@@ -14,11 +16,16 @@ from entropy_bot.errors import RateLimited, RequestWeightLimited, error_text, is
 log = logging.getLogger("entropy_bot.rest")
 
 DEFAULT_TIMEOUT = 15.0
-INFO_PAUSE_S = 0.15
+INFO_PAUSE_S = 0.5
+INFO_COOLDOWN_BASE_S = 15.0
+INFO_COOLDOWN_MAX_S = 120.0
 
 
 class InfoClient:
-    def __init__(self, base_url: str, *, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(self, base_url: str, *, timeout: float = DEFAULT_TIMEOUT,
+                 info_min_interval_s: float = INFO_PAUSE_S,
+                 cooldown_base_s: float = INFO_COOLDOWN_BASE_S,
+                 cooldown_max_s: float = INFO_COOLDOWN_MAX_S) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
@@ -26,6 +33,32 @@ class InfoClient:
         self._perp_dexs: list[Any] | None = None
         self._meta: dict[str, Any] | None = None
         self._meta_and_ctxs: Any | None = None
+        self.info_min_interval_s = max(0.0, info_min_interval_s)
+        self.cooldown_base_s = max(1.0, cooldown_base_s)
+        self.cooldown_max_s = max(self.cooldown_base_s, cooldown_max_s)
+        self._info_lock = threading.Lock()
+        self._last_info_at = 0.0
+        self._info_cooldown_until = 0.0
+        self._info_backoff_s = 0.0
+        self._info_429_logged = False
+
+    def info_cooldown_remaining(self) -> float:
+        return max(0.0, self._info_cooldown_until - time.monotonic())
+
+    def info_cooldown_active(self) -> bool:
+        return self.info_cooldown_remaining() > 0
+
+    def _retry_after_s(self, response: requests.Response) -> float | None:
+        raw = response.headers.get("Retry-After", "").strip()
+        if not raw:
+            return None
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            try:
+                return max(0.0, parsedate_to_datetime(raw).timestamp() - time.time())
+            except (TypeError, ValueError, OverflowError):
+                return None
 
     def close(self) -> None:
         self.session.close()
@@ -39,20 +72,42 @@ class InfoClient:
     ) -> Any:
         assert_no_foreign_venue(payload)
         url = f"{self.base_url}/info"
-        try:
-            response = self.session.post(
-                url, json=payload, timeout=self.timeout, allow_redirects=False
-            )
-        except requests.RequestException as exc:
-            if optional:
-                log.warning("info request failed: %s", exc)
-                return None
-            raise
+        with self._info_lock:
+            remaining = self.info_cooldown_remaining()
+            if remaining > 0:
+                if optional:
+                    return None
+                raise RateLimited(f"info cooldown active for {remaining:.1f}s")
+            wait = self.info_min_interval_s - (time.monotonic() - self._last_info_at)
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                response = self.session.post(
+                    url, json=payload, timeout=self.timeout, allow_redirects=False
+                )
+                if response.status_code == 429:
+                    retry_after = self._retry_after_s(response)
+                    self._info_backoff_s = min(
+                        self.cooldown_max_s,
+                        retry_after if retry_after is not None else
+                        (self._info_backoff_s * 2 if self._info_backoff_s else self.cooldown_base_s),
+                    )
+                    self._info_cooldown_until = time.monotonic() + self._info_backoff_s
+                    if not self._info_429_logged:
+                        log.warning("info 429 for %s; shared cooldown %.1fs",
+                                    payload.get("type"), self._info_backoff_s)
+                        self._info_429_logged = True
+            except requests.RequestException as exc:
+                if optional:
+                    log.warning("info request failed: %s", exc)
+                    return None
+                raise
+            finally:
+                self._last_info_at = time.monotonic()
         if 300 <= response.status_code < 400 or response.url != url:
             raise requests.RequestException("info endpoint redirect or URL mismatch")
         if response.status_code == 429:
             if optional:
-                log.warning("info 429 for %s", payload.get("type"))
                 return None
             raise RateLimited(f"info 429 for {payload.get('type')}")
         if optional and not response.ok:
@@ -63,8 +118,8 @@ class InfoClient:
         if not response.content or response.content.strip() in {b"", b"null"}:
             return None
         data = response.json()
-        if not cacheable:
-            time.sleep(INFO_PAUSE_S)
+        self._info_backoff_s = 0.0
+        self._info_429_logged = False
         return data
 
     def perp_dexs(self, *, refresh: bool = False) -> list[Any]:

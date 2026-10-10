@@ -40,7 +40,6 @@ from entropy_bot.orders import (
     status_oid,
 )
 from entropy_bot.quoting import (
-    STALE_QUOTE_MS,
     BookTop,
     QuotePlan,
     book_top,
@@ -58,15 +57,13 @@ from entropy_bot.safety import AccountLock, atomic_json, fresh_guardian
 log = logging.getLogger("entropy_bot.live")
 
 WS_STALE_S = 15.0
-POS_POLL_S = 0.8
-FILL_POLL_S = 2.0
 LOOP_S = 0.4
 DEADMAN_AHEAD_MS = 20_000
 DEADMAN_MIN_MS = 5_000
 DEADMAN_FALLBACK_MS = 6_000
 DEADMAN_REMAIN_LT_S = 8.0
 DEADMAN_REFRESH_S = DEADMAN_REMAIN_LT_S  # alias: refresh only when remaining < 8s
-IOC_GAP_S = 0.4
+IOC_GAP_S = 10.0
 WEIGHT_BACKOFF_FLOOR_S = 30.0
 
 
@@ -248,7 +245,7 @@ def replace_allowed(
     elapsed_s: float,
     min_replace_s: float,
 ) -> bool:
-    """Throttle mid/far/flat cancel+replace. Flatten ≥15s IOC take is always allowed."""
+    """Throttle maker cancel+replace. Reduce-only IOC exits remain available."""
     if take:
         return True
     if not has_rest:
@@ -288,6 +285,7 @@ class LiveQuoter:
     last_take_at: dict[str, float] = field(default_factory=dict)
     last_pos_poll: float = 0.0
     last_fill_poll: float = 0.0
+    last_order_poll: float = 0.0
     last_deadman: float = 0.0
     last_replace: dict[str, float] = field(default_factory=dict)
     deadman_until: float = 0.0
@@ -304,6 +302,10 @@ class LiveQuoter:
     external_orders: list[dict[str, Any]] = field(default_factory=list)
     leverage_proof: dict[str, dict[str, Any]] = field(default_factory=dict)
     leverage_blocked: bool = False
+    _deadman_retry_at: float = 0.0
+    _deadman_unavailable_logged: bool = False
+    _uncertain_logged: bool = False
+    _last_safety_cancel: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.notional:
@@ -390,7 +392,7 @@ class LiveQuoter:
         if self.diag is None:
             return
         now = time.time()
-        if not force and now - self.last_fill_poll < FILL_POLL_S:
+        if not force and now - self.last_fill_poll < getattr(self.settings, "fill_reconcile_s", 60.0):
             return
         rows = self.client.user_fills(self.signer.account, optional=True)
         self.last_fill_poll = now
@@ -485,7 +487,7 @@ class LiveQuoter:
 
     def refresh_positions(self, *, force: bool = False) -> bool:
         now = time.time()
-        if not force and now - self.last_pos_poll < POS_POLL_S:
+        if not force and now - self.last_pos_poll < getattr(self.settings, "position_reconcile_s", 10.0):
             return self.position_known
         state = self.client.clearinghouse_state(self.signer.account, ALLOWED_DEX, optional=True)
         parsed = positions_from_state(state, tuple(self.markets), self.markets)
@@ -514,7 +516,7 @@ class LiveQuoter:
             top = self.book_for(coin, self._feed)
             if top is None:
                 continue
-            self.pos_since[coin] = time.time() - 16.0
+            self.pos_since[coin] = time.time() - getattr(self.settings, "flatten_take_s", 120.0) - 1.0
             plan = self.plan_for(coin, top)
             if plan.take:
                 self._place(coin, plan)
@@ -529,8 +531,12 @@ class LiveQuoter:
         atomic_json(self.settings.guardian_lease_path,
                     {"heartbeat": time.time(), "account": self.signer.account, "dex": ALLOWED_DEX})
 
-    def reconcile_orders(self) -> bool:
+    def reconcile_orders(self, *, force: bool = False) -> bool:
+        now = time.time()
+        if not force and now - self.last_order_poll < getattr(self.settings, "open_orders_reconcile_s", 15.0):
+            return self.open_orders_known and not self.external_orders
         opens = self.client.open_orders(self.signer.account, ALLOWED_DEX, optional=True)
+        self.last_order_poll = now
         if opens is None:
             self.open_orders_known = False
             return False
@@ -597,6 +603,8 @@ class LiveQuoter:
             szi=szi,
             age_ms=age_ms,
             notional_usd=self.notional,
+            flatten_far_ms=int(getattr(self.settings, "flatten_far_s", 60.0) * 1000),
+            flatten_take_ms=int(getattr(self.settings, "flatten_take_s", 120.0) * 1000),
         )
 
     def _post(self, payload: dict[str, Any]) -> Any:
@@ -651,6 +659,8 @@ class LiveQuoter:
 
     def maybe_deadman(self) -> None:
         now = time.time()
+        if now < self._deadman_retry_at:
+            return
         if self._in_weight_backoff():
             return
         if not deadman_needs_refresh(self.deadman_until, now):
@@ -663,10 +673,13 @@ class LiveQuoter:
             if is_weight_limit_error(exc):
                 self._trip_weight_backoff(exc)
                 return
-            log.warning("dead-man renew failed: %s", exc)
+            if not self._deadman_unavailable_logged:
+                log.warning("dead-man unavailable; retry in %.0fs: %s",
+                            getattr(self.settings, "deadman_retry_s", 300.0), exc)
+                self._deadman_unavailable_logged = True
             self.last_deadman = now
-            # Do not tight-loop: wait at least MIN_REPLACE_S before another attempt.
-            self.deadman_until = now + max(self.settings.min_replace_s, DEADMAN_REMAIN_LT_S)
+            self._deadman_retry_at = now + getattr(self.settings, "deadman_retry_s", 300.0)
+            self.deadman_until = self._deadman_retry_at
 
     def clear_deadman(self) -> None:
         try:
@@ -768,12 +781,15 @@ class LiveQuoter:
     def _place(self, coin: str, plan: QuotePlan) -> dict[str, Any] | None:
         if not plan.intents:
             return None
-        if self.leverage_blocked and not plan.take:
+        safety_exit = bool(plan.intents) and all(intent.reduce_only for intent in plan.intents)
+        if self.leverage_blocked and not safety_exit:
             return {"blocked": "leverageMismatch"}
-        if not self.open_orders_known or self.external_orders:
+        if getattr(self.client, "info_cooldown_active", lambda: False)() and not safety_exit:
+            return {"blocked": "infoCooldown"}
+        if (not self.open_orders_known or self.external_orders) and not safety_exit:
             log.warning("refuse placement %s; open-order state unknown", coin)
             return {"blocked": "openOrdersUnknown"}
-        if not self.position_known or (not plan.take and not self.guardian_ready()):
+        if (not self.position_known and not safety_exit) or (not safety_exit and not self.guardian_ready()):
             log.error("refuse placement %s; safety protection unavailable", coin)
             return {"blocked": "safetyProtectionUnavailable"}
         specs = []
@@ -907,11 +923,7 @@ class LiveQuoter:
             return
         plan = self.plan_for(coin, top)
         key = plan.key()
-        stale = (
-            plan.mode == "flat"
-            and self.quote_placed_at.get(coin, 0) > 0
-            and (time.time() - self.quote_placed_at[coin]) * 1000 > STALE_QUOTE_MS
-        )
+
         have_buy = side_occupied(self.rests, coin, "B")
         have_sell = side_occupied(self.rests, coin, "A")
         want_buy = any(i.is_buy for i in plan.intents)
@@ -953,7 +965,7 @@ class LiveQuoter:
             self.last_plan_key[coin] = ""
             self.maybe_deadman()
             return
-        if same_coverage and key == self.last_plan_key.get(coin) and not stale:
+        if same_coverage and key == self.last_plan_key.get(coin):
             extras = list(self.extra_oids.get(coin, []))
             if extras:
                 try:
@@ -983,10 +995,7 @@ class LiveQuoter:
                 self._replace_skip_logged[coin] = True
             self.maybe_deadman()
             return
-        if stale:
-            log.info("stale same-price rest >45s, cancel+replace %s", coin)
-        else:
-            log.info("plan change, cancel then place %s stage=%s tif=%s", coin, plan.stage, plan.tif)
+        log.info("plan change, cancel then place %s stage=%s tif=%s", coin, plan.stage, plan.tif)
         try:
             self.cancel_coin_rests(refetch=True, only_coin=coin)
         except Exception as exc:  # noqa: BLE001
@@ -1036,8 +1045,22 @@ class LiveQuoter:
             log.warning("fill-diag poll: %s", exc)
         self.flush_markouts()
         self.refresh_lease()
-        if not self.guardian_ready() or not self.position_known or not self.reconcile_orders():
-            self.cancel_coin_rests(refetch=False)
+        account_safe = (self.guardian_ready() and self.position_known and self.reconcile_orders()
+                        and not getattr(self.client, "info_cooldown_active", lambda: False)())
+        if not account_safe:
+            if not self._uncertain_logged:
+                log.warning("account state uncertain; opening quotes suppressed")
+                self._uncertain_logged = True
+            now = time.time()
+            if now - self._last_safety_cancel >= max(self.settings.min_replace_s, 5.0):
+                self.cancel_coin_rests(refetch=False)
+                self._last_safety_cancel = now
+            # Cached inventory may still be flattened through reduce-only plans below.
+            if not any(abs(value) > 0 for value in self.pos.values()):
+                return
+        else:
+            self._uncertain_logged = False
+        if self.external_orders:
             return
         for coin in self.markets:
             try:
@@ -1054,13 +1077,19 @@ class LiveQuoter:
         self.maybe_deadman()
 
     def shutdown_cancels(self) -> bool:
-        limited = False
-        try:
-            result = self.cancel_coin_rests(refetch=True)
-            limited = bool(result.get("rateLimited"))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("shutdown cancel: %s", exc)
-            limited = True
+        limited = True
+        attempts = getattr(self.settings, "shutdown_cancel_attempts", 3)
+        for attempt in range(attempts):
+            try:
+                result = self.cancel_coin_rests(refetch=True)
+                limited = bool(result.get("rateLimited"))
+                if self.open_orders_known and not any(self._has_rest(c) for c in self.markets):
+                    limited = False
+                    break
+            except Exception as exc:  # noqa: BLE001
+                log.warning("shutdown cancel attempt %s: %s", attempt + 1, exc)
+            if attempt + 1 < attempts:
+                time.sleep(getattr(self.settings, "shutdown_retry_s", 2.0))
         leftover = [
             (self.markets[coin].asset_id, slot.cloid)
             for coin, sides in self.rests.items()
@@ -1101,7 +1130,7 @@ class LiveQuoter:
                 top = self.book_for(coin, self._feed)
                 if top is None:
                     continue
-                self.pos_since[coin] = time.time() - 16.0
+                self.pos_since[coin] = time.time() - getattr(self.settings, "flatten_take_s", 120.0) - 1.0
                 plan = self.plan_for(coin, top)
                 if plan.take:
                     try:
@@ -1139,7 +1168,12 @@ def run_live(settings: Settings, *, seconds: float | None = None) -> int:
     require_live(settings)
     signer = LiveSigner(settings.private_key or "", settings.account, nonce_dir=settings.state_dir)
     account_lock = AccountLock(signer.account, settings.state_dir, ALLOWED_DEX)
-    client = InfoClient(settings.api_url)
+    client = InfoClient(
+        settings.api_url,
+        info_min_interval_s=getattr(settings, "info_min_interval_s", 0.5),
+        cooldown_base_s=getattr(settings, "info_cooldown_base_s", 15.0),
+        cooldown_max_s=getattr(settings, "info_cooldown_max_s", 120.0),
+    )
     feed: BookFeed | None = None
     quoter: LiveQuoter | None = None
     intent_wal: IntentWAL | None = None
@@ -1168,11 +1202,13 @@ def run_live(settings: Settings, *, seconds: float | None = None) -> int:
         )
         log.info(
             "write throttle: MIN_REPLACE_S=%ss per coin while a rest is live "
-            "(book ticks do not cancel+replace). Flatten ≥15s IOC take still fires. "
+            "(book ticks do not cancel+replace at the same price). Flatten far=%ss mid, IOC=%ss. "
             "request-weight error backs off signed writes for %ss (log once). "
             "ops: ANTH-only until weight recovers and NY RTH for SNDK "
             "(COINS default still lists both).",
             settings.min_replace_s,
+            getattr(settings, "flatten_far_s", 60.0),
+            getattr(settings, "flatten_take_s", 120.0),
             weight_backoff_s(settings.min_replace_s),
         )
         log.info(

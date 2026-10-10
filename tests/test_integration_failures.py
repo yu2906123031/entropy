@@ -167,14 +167,14 @@ def test_reconcile_external_order_blocks_and_unknown_submit_recovers_from_wal(tm
     assert not q.reconcile_orders()
 
     client.opens = []
-    assert q.reconcile_orders()
+    assert q.reconcile_orders(force=True)
     wal = IntentWAL(tmp_path / "intents.db"); q.intent_wal = wal
     q.guardian_ready = lambda: True
     client.post_exchange = lambda _payload: (_ for _ in ()).throw(ConnectionError("unknown submit"))
     with pytest.raises(ConnectionError): q._place(COIN, maker_plan())
     pending = wal.pending(); assert len(pending) == 1
     client.opens = [{"coin": COIN, "oid": 99, "side": "B", "cloid": pending[0]["cloid"]}]
-    assert q.reconcile_orders()
+    assert q.reconcile_orders(force=True)
     assert wal.pending() == []
     wal.close()
 
@@ -202,7 +202,7 @@ def test_run_live_directly_blocks_external_orders(monkeypatch, tmp_path):
     class RunSigner(Signer):
         signer_address = "0xabc"; is_agent = False
     class RunClient(Client):
-        def __init__(self, _url): super().__init__(); self.opens = [{"coin": COIN, "cloid": "external"}]
+        def __init__(self, _url, **_kwargs): super().__init__(); self.opens = [{"coin": COIN, "cloid": "external"}]
         def perp_dexs(self): return [{"name": "io", "fullName": "EntropyIO"}]
         def close(self): pass
     class Lock:

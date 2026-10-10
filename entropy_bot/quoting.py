@@ -23,10 +23,8 @@ from entropy_bot.precision import (
     tick_size,
 )
 
-FLAT_FAR_MS = 6_000
-FLAT_TAKE_MS = 15_000
-STALE_QUOTE_MS = 45_000
-
+FLAT_FAR_MS = 60_000
+FLAT_TAKE_MS = 120_000
 Stage = Literal["flat", "far", "mid", "take"]
 Mode = Literal["flat", "long", "short"]
 
@@ -253,12 +251,13 @@ def desired_quotes(
     ]
 
 
-def flatten_stage(age_ms: int, szi: float) -> Stage:
+def flatten_stage(age_ms: int, szi: float, *, far_ms: int = FLAT_FAR_MS,
+                  take_ms: int = FLAT_TAKE_MS) -> Stage:
     if abs(szi) <= 0:
         return "flat"
-    if age_ms >= FLAT_TAKE_MS:
+    if age_ms >= take_ms:
         return "take"
-    if age_ms >= FLAT_FAR_MS:
+    if age_ms >= far_ms:
         return "mid"
     return "far"
 
@@ -297,8 +296,10 @@ def quote_plan(
     szi: float,
     age_ms: int,
     notional_usd: float,
+    flatten_far_ms: int = FLAT_FAR_MS,
+    flatten_take_ms: int = FLAT_TAKE_MS,
 ) -> QuotePlan:
-    stage = flatten_stage(age_ms, szi)
+    stage = flatten_stage(age_ms, szi, far_ms=flatten_far_ms, take_ms=flatten_take_ms)
     if abs(szi) <= 0:
         px = alo_two_sided(market, top)
         intents: list[QuoteIntent] = []

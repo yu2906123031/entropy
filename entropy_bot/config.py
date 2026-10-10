@@ -29,6 +29,8 @@ DEFAULT_NOTIONAL = 12.0
 DEFAULT_OFFSET_TICKS = 2
 DEFAULT_MAX_LEVERAGE = 1
 DEFAULT_MIN_REPLACE_S = 12.0
+DEFAULT_FLATTEN_FAR_S = 60.0
+DEFAULT_FLATTEN_TAKE_S = 120.0
 MIN_ORDER_USD = 10.0
 DEFAULT_INTENT_DB_PATH = "~/.local/state/entropy-bot/intents.sqlite3"
 
@@ -59,6 +61,17 @@ class Settings:
     guardian_token_path: str = "~/.local/state/entropy-bot/guardian-session.token"
     guardian_max_age: float = 5.0
     guardian_poll_s: float = 1.0
+    flatten_far_s: float = DEFAULT_FLATTEN_FAR_S
+    flatten_take_s: float = DEFAULT_FLATTEN_TAKE_S
+    position_reconcile_s: float = 10.0
+    open_orders_reconcile_s: float = 15.0
+    fill_reconcile_s: float = 60.0
+    deadman_retry_s: float = 300.0
+    shutdown_cancel_attempts: int = 3
+    shutdown_retry_s: float = 2.0
+    info_min_interval_s: float = 0.5
+    info_cooldown_base_s: float = 15.0
+    info_cooldown_max_s: float = 120.0
 
     @property
     def paper(self) -> bool:
@@ -139,9 +152,20 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         min_replace_s = float(os.environ.get("MIN_REPLACE_S", DEFAULT_MIN_REPLACE_S))
         guardian_max_age = float(os.environ.get("GUARDIAN_MAX_AGE", "5"))
         guardian_poll_s = float(os.environ.get("GUARDIAN_POLL_S", "1"))
+        flatten_far_s = float(os.environ.get("FLATTEN_FAR_S", DEFAULT_FLATTEN_FAR_S))
+        flatten_take_s = float(os.environ.get("FLATTEN_TAKE_S", DEFAULT_FLATTEN_TAKE_S))
+        position_reconcile_s = float(os.environ.get("POSITION_RECONCILE_S", "10"))
+        open_orders_reconcile_s = float(os.environ.get("OPEN_ORDERS_RECONCILE_S", "15"))
+        fill_reconcile_s = float(os.environ.get("FILL_RECONCILE_S", "60"))
+        deadman_retry_s = float(os.environ.get("DEADMAN_RETRY_S", "300"))
+        shutdown_cancel_attempts = int(os.environ.get("SHUTDOWN_CANCEL_ATTEMPTS", "3"))
+        shutdown_retry_s = float(os.environ.get("SHUTDOWN_RETRY_S", "2"))
+        info_min_interval_s = float(os.environ.get("INFO_MIN_INTERVAL_S", "0.5"))
+        info_cooldown_base_s = float(os.environ.get("INFO_COOLDOWN_BASE_S", "15"))
+        info_cooldown_max_s = float(os.environ.get("INFO_COOLDOWN_MAX_S", "120"))
     except ValueError as exc:
         raise ConfigError(f"invalid numeric config: {exc}") from exc
-    floats = (notional, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s)
+    floats = (notional, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
     if rebate_bps is not None:
         floats += (rebate_bps,)
     if not all(math.isfinite(value) for value in floats):
@@ -152,6 +176,13 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         raise ConfigError("MIN_REPLACE_S must be >= 0")
     if guardian_max_age <= 0 or guardian_poll_s <= 0:
         raise ConfigError("guardian timing must be finite and positive")
+    if flatten_far_s < 0 or flatten_take_s <= flatten_far_s:
+        raise ConfigError("FLATTEN_TAKE_S must be greater than FLATTEN_FAR_S >= 0")
+    if min(position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s,
+           deadman_retry_s, shutdown_retry_s) <= 0 or shutdown_cancel_attempts < 1:
+        raise ConfigError("reconciliation, retry, and shutdown timing must be positive")
+    if info_min_interval_s < 0 or info_cooldown_base_s <= 0 or info_cooldown_max_s < info_cooldown_base_s:
+        raise ConfigError("info pacing/cooldown values are inconsistent")
     rates_for_tier(fee_tier)
     entropy_program(entropy_tier)
     if not 0.0 <= referral < 1.0:
@@ -196,6 +227,17 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         guardian_token_path=str(Path(_optional_env("GUARDIAN_TOKEN_PATH") or "~/.local/state/entropy-bot/guardian-session.token").expanduser()),
         guardian_max_age=guardian_max_age,
         guardian_poll_s=guardian_poll_s,
+        flatten_far_s=flatten_far_s,
+        flatten_take_s=flatten_take_s,
+        position_reconcile_s=position_reconcile_s,
+        open_orders_reconcile_s=open_orders_reconcile_s,
+        fill_reconcile_s=fill_reconcile_s,
+        deadman_retry_s=deadman_retry_s,
+        shutdown_cancel_attempts=shutdown_cancel_attempts,
+        shutdown_retry_s=shutdown_retry_s,
+        info_min_interval_s=info_min_interval_s,
+        info_cooldown_base_s=info_cooldown_base_s,
+        info_cooldown_max_s=info_cooldown_max_s,
     )
 
 

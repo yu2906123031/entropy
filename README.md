@@ -27,16 +27,16 @@ Per coin: at most **1 buy + 1 sell**. Isolated-only. Builder = Entropy `0xcD254d
 
 - Spread ≤ 2 ticks: join exact bid/ask.
 - Spread > 2 ticks: `buy=floorToTick(mid-tick)`, `sell=ceilToTick(mid+tick)`, clamp inside the book, `buy < sell`. Example `1985.00 / 1986.90 / tick 0.1` → buy **1985.8** sell **1986.1**.
-- Same-price rests older than 45s: cancel and replace at fresh BBO/mid.
+- Same-price rests remain in queue; replacement happens only when the desired price/coverage changes.
 
 **IN POSITION** — flatten only, never add. Size `min(notionalSz, |szi|)`. Age clock starts when `|szi|` first becomes nonzero; resets on flat.
 
 - Long: only reduce-only sell. Short: only reduce-only buy.
-- `<6s`: reduce-only ALO at the far touch (long sell@ask, short buy@bid).
-- `6–15s`: reduce-only ALO improved to mid (or 1 tick inside the near touch).
-- `≥15s`: cancel rests, reduce-only **IOC** take on the near touch (long sell@bid, short buy@ask).
+- `<60s`: reduce-only ALO at the far touch (long sell@ask, short buy@bid).
+- `60–120s`: reduce-only ALO improved to mid (or 1 tick inside the near touch).
+- `≥120s`: cancel rests, reduce-only **IOC** take on the near touch (long sell@bid, short buy@ask).
 
-ALO / Bad Alo Px / post-only reject: log and requote; the loop does not stop. Stage / TIF / price change: cancel that coin's rests (local cache + `frontendOpenOrders` with `dex:"io"`) then place — **throttled** by `MIN_REPLACE_S` (default 12s) per coin while a rest is live. A book tick alone does not cancel+replace until that interval passes. Flatten ≥15s IOC take still fires on schedule and is not serialized behind the same interval. Never place a side that already has an oid/cloid. HIP-3 oids exceed int32 — they are never truncated.
+ALO / Bad Alo Px / post-only reject: log and requote; the loop does not stop. Stage / TIF / price change: cancel that coin's rests (local cache + `frontendOpenOrders` with `dex:"io"`) then place — **throttled** by `MIN_REPLACE_S` (default 12s) per coin while a rest is live. Same-price rests retain queue priority. Timed reduce-only IOC exits remain available. Never place a side that already has an oid/cloid. HIP-3 oids exceed int32 — they are never truncated.
 
 ### Request weight / write throttle
 
@@ -44,7 +44,7 @@ Hyperliquid address-level cumulative request weight (`nRequestsUsed` vs `nReques
 
 Current ops: run **ANTH-only** until weight recovers and NY RTH for SNDK. The default `COINS` example still lists `io:ANTH,io:SNDK`.
 
-WS `l2Book` for both coins. REST book only if WS is stale >15s. Inventory from `clearinghouseState` with `dex:"io"`. Open-order queries always send `dex:"io"`. A null/429 response does **not** wipe the local rest cache.
+WS `l2Book` and `userFills` are primary. REST book runs only after WS is stale >15s; position/open-order/fill reconciliation defaults to 10s/15s/60s. Every `/info` request shares one paced client. A 429 applies `Retry-After` or exponential 15–120s cooldown to all optional info calls. Unknown account state and active cooldown suppress opening quotes while bounded cancels and reduce-only exits remain available. A null/429 response does **not** wipe the local rest cache.
 
 ### Fill-rate / +3s markout (logging only)
 
@@ -182,7 +182,14 @@ explicit production action.
 | `HYPERLIQUID_PRIVATE_KEY` | unset | Agent or master key. Required for `live` / `cancel`. Never commit |
 | `HYPERLIQUID_ACCOUNT` | derived from key | Master address. Set this when the key is an agent |
 | `COINS` | `io:ANTH,io:SNDK` | Case-sensitive; foreign venues rejected. Current ops: ANTH-only until request weight recovers and NY RTH for SNDK |
-| `MIN_REPLACE_S` | `12` | Per-coin seconds between cancel+replace while a rest is live. Flatten ≥15s IOC take is not gated |
+| `MIN_REPLACE_S` | `12` | Per-coin seconds between maker cancel+replace while a rest is live |
+| `FLATTEN_FAR_S` / `FLATTEN_TAKE_S` | `60` / `120` | Reduce-only far-touch duration, then mid; IOC starts at take threshold |
+| `POSITION_RECONCILE_S` / `OPEN_ORDERS_RECONCILE_S` | `10` / `15` | Slow authoritative REST reconciliation intervals |
+| `FILL_RECONCILE_S` | `60` | REST fill backup interval; WS user fills are primary |
+| `INFO_MIN_INTERVAL_S` | `0.5` | Shared minimum spacing between `/info` calls |
+| `INFO_COOLDOWN_BASE_S` / `INFO_COOLDOWN_MAX_S` | `15` / `120` | Exponential 429 cooldown bounds; `Retry-After` takes precedence |
+| `DEADMAN_RETRY_S` | `300` | Retry interval after scheduleCancel is unavailable |
+| `SHUTDOWN_CANCEL_ATTEMPTS` / `SHUTDOWN_RETRY_S` | `3` / `2` | Bounded shutdown cancellation reconciliation |
 | `QUOTE_NOTIONAL_USD` | `50` | Notional per side (live and paper), ≥ $10 |
 | `QUOTE_OFFSET_TICKS` | `2` | Legacy. Live ignores it |
 | `MAX_LEVERAGE` | `2` | Capped below each market max (ANTH 3 / SNDK 10) |
