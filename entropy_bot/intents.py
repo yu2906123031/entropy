@@ -157,8 +157,8 @@ class IntentWAL:
             raw = str(order.get("status") or status.get("status") or "").lower()
             if raw == "filled":
                 self.resolve(cloid, "filled")
-            elif raw in {"canceled", "cancelled", "rejected", "margincanceled"}:
-                self.resolve(cloid, "rejected" if raw == "rejected" else "cancelled")
+            elif raw in {"canceled", "cancelled", "rejected", "margincanceled", "unknownoid"}:
+                self.resolve(cloid, "rejected" if raw in {"rejected", "unknownoid"} else "cancelled")
             else:
                 unresolved.add(cloid)
         return unresolved

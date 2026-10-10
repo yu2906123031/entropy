@@ -133,6 +133,19 @@ def test_wal_prunes_only_terminal(tmp_path):
         wal.close()
 
 
+def test_wal_unknown_oid_resolves_never_accepted_intent(tmp_path):
+    wal = IntentWAL(tmp_path / "wal.db")
+    try:
+        wal.add_pending("missing", "io:SNDK", "B", {})
+        unresolved = wal.reconcile_history(
+            ["missing"], [], lambda _cloid: {"status": "unknownOid"}
+        )
+        assert unresolved == set()
+        assert wal.pending() == []
+    finally:
+        wal.close()
+
+
 def test_fee_is_conservative_and_never_claims_negative():
     fee = estimate_fees(tier=0, entropy_self_rebate=100)
     assert fee.taker_pct == 0
