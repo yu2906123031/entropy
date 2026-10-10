@@ -44,7 +44,13 @@ def lease_fresh(path: str, account: str, max_age: float, now: float) -> bool:
 
 def _identity() -> tuple[int, str, str]:
     pid = os.getpid()
-    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        # ProcSubset=pid intentionally hides /proc/sys. The machine id plus a
+        # random session token and process start time still uniquely bind the
+        # guardian instance inside the hardened service sandbox.
+        boot = Path("/etc/machine-id").read_text().strip()
     start = Path(f"/proc/{pid}/stat").read_text().split()[21]
     return pid, boot, start
 

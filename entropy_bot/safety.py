@@ -85,7 +85,10 @@ def atomic_json(path: str | Path, data: dict[str, Any]) -> None:
 
 def _process_identity(pid: int) -> tuple[str, str] | None:
     try:
-        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        try:
+            boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        except OSError:
+            boot = Path("/etc/machine-id").read_text().strip()
         start = Path(f"/proc/{pid}/stat").read_text().split()[21]
         return boot, start
     except (OSError, IndexError, ValueError):
