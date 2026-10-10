@@ -12,7 +12,7 @@ User=entropy-bot
 Group=entropy-bot
 WorkingDirectory=/opt/entropy-bot/current/app
 EnvironmentFile=/etc/entropy-bot/entropy.env
-LoadCredential=keystore-password:/etc/credstore.encrypted/entropy-grid.cred
+LoadCredentialEncrypted=keystore-password:/etc/credstore.encrypted/entropy-grid.cred
 Environment=ENTROPY_CREDENTIAL_FILE=%d/keystore-password
 Environment=COINS=io:SNDK
 Environment=QUOTE_NOTIONAL_USD=12
@@ -31,7 +31,29 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+TasksMax=64
+MemoryMax=512M
 ReadWritePaths=/run/entropy-bot /var/lib/entropy-bot
 
 [Install]
