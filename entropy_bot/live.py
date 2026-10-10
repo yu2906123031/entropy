@@ -225,6 +225,29 @@ def positions_from_state(
     return out
 
 
+def entry_prices_from_state(
+    state: dict[str, Any] | None,
+    coins: tuple[str, ...],
+    markets: dict[str, Market],
+) -> dict[str, float] | None:
+    if state is None or not isinstance(state.get("assetPositions"), list):
+        return None
+    out = {coin: 0.0 for coin in coins}
+    for item in state["assetPositions"]:
+        pos = (item or {}).get("position") or {}
+        coin = match_order_coin({"coin": pos.get("coin"), "a": None}, markets)
+        if coin not in out:
+            continue
+        try:
+            value = float(pos.get("entryPx") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value < 0:
+            return None
+        out[coin] = value
+    return out
+
+
 def deadman_deadline_ms(ahead_ms: int, *, now_ms: int | None = None) -> int:
     now = int(time.time() * 1000) if now_ms is None else now_ms
     t = now + int(ahead_ms)
@@ -279,6 +302,7 @@ class LiveQuoter:
     rests: dict[str, dict[str, RestSlot]] = field(default_factory=dict)
     extra_oids: dict[str, list[int]] = field(default_factory=dict)
     pos: dict[str, float] = field(default_factory=dict)
+    entry_px: dict[str, float] = field(default_factory=dict)
     pos_since: dict[str, float] = field(default_factory=dict)
     last_plan_key: dict[str, str] = field(default_factory=dict)
     quote_placed_at: dict[str, float] = field(default_factory=dict)
@@ -317,6 +341,8 @@ class LiveQuoter:
             self.extra_oids = {coin: [] for coin in coins}
         if not self.pos:
             self.pos = {coin: 0.0 for coin in coins}
+        if not self.entry_px:
+            self.entry_px = {coin: 0.0 for coin in coins}
         if not self.pos_since:
             self.pos_since = {coin: 0.0 for coin in coins}
         if not self.last_replace:
@@ -491,13 +517,15 @@ class LiveQuoter:
             return self.position_known
         state = self.client.clearinghouse_state(self.signer.account, ALLOWED_DEX, optional=True)
         parsed = positions_from_state(state, tuple(self.markets), self.markets)
-        if parsed is None:
+        entries = entry_prices_from_state(state, tuple(self.markets), self.markets)
+        if parsed is None or entries is None:
             log.warning("clearinghouseState null/429; keeping inventory cache")
             self.last_pos_poll = now
             self.position_known = False
             return False
         self.pos_since = sync_pos_since(self.pos, parsed, self.pos_since, now)
         self.pos = parsed
+        self.entry_px = entries
         self.last_pos_poll = now
         self.position_known = True
         if any(abs(value) > 0 for value in parsed.values()) and not self._isolated_leverage_verified(state):
@@ -605,6 +633,8 @@ class LiveQuoter:
             notional_usd=self.notional,
             flatten_far_ms=int(getattr(self.settings, "flatten_far_s", 60.0) * 1000),
             flatten_take_ms=int(getattr(self.settings, "flatten_take_s", 120.0) * 1000),
+            entry_px=self.entry_px.get(coin, 0.0),
+            min_exit_edge_ticks=getattr(self.settings, "min_exit_edge_ticks", 2),
         )
 
     def _post(self, payload: dict[str, Any]) -> Any:

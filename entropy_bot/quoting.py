@@ -298,6 +298,8 @@ def quote_plan(
     notional_usd: float,
     flatten_far_ms: int = FLAT_FAR_MS,
     flatten_take_ms: int = FLAT_TAKE_MS,
+    entry_px: float = 0.0,
+    min_exit_edge_ticks: int = 0,
 ) -> QuotePlan:
     stage = flatten_stage(age_ms, szi, far_ms=flatten_far_ms, take_ms=flatten_take_ms)
     if abs(szi) <= 0:
@@ -332,6 +334,13 @@ def quote_plan(
             if sell_raw_c is None:
                 return QuotePlan(market.coin, "long", stage, tif, take, [], age_ms, szi)
             sell_raw = sell_raw_c
+            if entry_px > 0 and min_exit_edge_ticks > 0:
+                tick = top.inferred_tick(market.sz_decimals)
+                sell_raw = _round_side(
+                    max(sell_raw, entry_px + min_exit_edge_ticks * tick),
+                    market.sz_decimals,
+                    side="ask",
+                )
         notional_sz = size_from_notional(notional_usd, sell_raw, market.sz_decimals)
         sz = flatten_size(abs(szi), notional_sz, market.sz_decimals)
         if sz > 0:
@@ -346,6 +355,13 @@ def quote_plan(
         if buy_raw_c is None:
             return QuotePlan(market.coin, "short", stage, tif, take, [], age_ms, szi)
         buy_raw = buy_raw_c
+        if entry_px > 0 and min_exit_edge_ticks > 0:
+            tick = top.inferred_tick(market.sz_decimals)
+            buy_raw = _round_side(
+                min(buy_raw, entry_px - min_exit_edge_ticks * tick),
+                market.sz_decimals,
+                side="bid",
+            )
     notional_sz = size_from_notional(notional_usd, buy_raw, market.sz_decimals)
     sz = flatten_size(abs(szi), notional_sz, market.sz_decimals)
     if sz > 0:

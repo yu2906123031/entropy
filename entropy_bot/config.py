@@ -31,6 +31,7 @@ DEFAULT_MAX_LEVERAGE = 1
 DEFAULT_MIN_REPLACE_S = 12.0
 DEFAULT_FLATTEN_FAR_S = 60.0
 DEFAULT_FLATTEN_TAKE_S = 120.0
+DEFAULT_MIN_EXIT_EDGE_TICKS = 2
 MIN_ORDER_USD = 10.0
 DEFAULT_INTENT_DB_PATH = "~/.local/state/entropy-bot/intents.sqlite3"
 
@@ -72,6 +73,7 @@ class Settings:
     info_min_interval_s: float = 0.5
     info_cooldown_base_s: float = 15.0
     info_cooldown_max_s: float = 120.0
+    min_exit_edge_ticks: int = DEFAULT_MIN_EXIT_EDGE_TICKS
 
     @property
     def paper(self) -> bool:
@@ -163,6 +165,7 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         info_min_interval_s = float(os.environ.get("INFO_MIN_INTERVAL_S", "0.5"))
         info_cooldown_base_s = float(os.environ.get("INFO_COOLDOWN_BASE_S", "15"))
         info_cooldown_max_s = float(os.environ.get("INFO_COOLDOWN_MAX_S", "120"))
+        min_exit_edge_ticks = int(os.environ.get("MIN_EXIT_EDGE_TICKS", DEFAULT_MIN_EXIT_EDGE_TICKS))
     except ValueError as exc:
         raise ConfigError(f"invalid numeric config: {exc}") from exc
     floats = (notional, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
@@ -183,6 +186,8 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         raise ConfigError("reconciliation, retry, and shutdown timing must be positive")
     if info_min_interval_s < 0 or info_cooldown_base_s <= 0 or info_cooldown_max_s < info_cooldown_base_s:
         raise ConfigError("info pacing/cooldown values are inconsistent")
+    if min_exit_edge_ticks < 0:
+        raise ConfigError("MIN_EXIT_EDGE_TICKS must be >= 0")
     rates_for_tier(fee_tier)
     entropy_program(entropy_tier)
     if not 0.0 <= referral < 1.0:
@@ -238,6 +243,7 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         info_min_interval_s=info_min_interval_s,
         info_cooldown_base_s=info_cooldown_base_s,
         info_cooldown_max_s=info_cooldown_max_s,
+        min_exit_edge_ticks=min_exit_edge_ticks,
     )
 
 

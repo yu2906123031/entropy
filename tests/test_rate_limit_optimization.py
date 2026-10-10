@@ -7,7 +7,8 @@ import pytest
 from entropy_bot.config import load_settings
 from entropy_bot.errors import RateLimited
 from entropy_bot.live import LiveQuoter, RestSlot
-from entropy_bot.quoting import BookTop, QuoteIntent, QuotePlan, flatten_stage
+from entropy_bot.coins import Market
+from entropy_bot.quoting import BookTop, QuoteIntent, QuotePlan, flatten_stage, quote_plan
 from entropy_bot.rest import InfoClient
 
 COIN = "io:SNDK"
@@ -87,6 +88,20 @@ def test_flatten_ladder_defaults_and_configuration(monkeypatch, tmp_path):
     settings = load_settings(load_private_key=False)
     assert settings.flatten_far_s == 75
     assert settings.flatten_take_s == 110
+
+
+def test_maker_exit_requires_two_tick_edge_then_ioc_can_cross():
+    market = Market(COIN, 200002, 0, 10, 4, 10, True, "isolated", True, 1.0, False, 0)
+    top = BookTop(COIN, 1588.8, 1588.9, 1, 1, 1588.85, 1,
+                  bid_px="1588.8", ask_px="1588.9")
+    maker = quote_plan(market, top, szi=0.0075, age_ms=60_000,
+                       notional_usd=12, entry_px=1588.8, min_exit_edge_ticks=2)
+    assert maker.tif == "Alo"
+    assert maker.sell_px == pytest.approx(1589.0)
+    take = quote_plan(market, top, szi=0.0075, age_ms=120_000,
+                      notional_usd=12, entry_px=1588.8, min_exit_edge_ticks=2)
+    assert take.tif == "Ioc"
+    assert take.sell_px == pytest.approx(1588.8)
 
 
 def test_opening_blocked_during_info_cooldown_reduce_only_allowed(tmp_path):
