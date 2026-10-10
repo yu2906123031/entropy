@@ -5,7 +5,13 @@ set -euo pipefail
 REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 PREFIX=${PREFIX:-/opt/entropy-bot}
 UNIT_DIR=${UNIT_DIR:-/etc/systemd/system}
-PYTHON=${PYTHON:-python3}
+if [[ -z "${PYTHON:-}" ]]; then
+  if [[ -x /opt/entropy-bot/python-runtime/bin/python3 ]]; then
+    PYTHON=/opt/entropy-bot/python-runtime/bin/python3
+  else
+    PYTHON=python3
+  fi
+fi
 WHEELHOUSE=${WHEELHOUSE:-}
 COMMIT=${1:-HEAD}
 
