@@ -1,0 +1,32 @@
+[Unit]
+Description=Entropy independent EBOT cancellation guardian
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=entropy-bot
+Group=entropy-bot
+WorkingDirectory=/opt/entropy-bot/current/app
+EnvironmentFile=/etc/entropy-bot/entropy.env
+LoadCredential=keystore-password:/etc/credstore.encrypted/entropy-grid.cred
+Environment=ENTROPY_CREDENTIAL_FILE=%d/keystore-password
+Environment=GUARDIAN_TOKEN_PATH=/run/entropy-bot/guardian-session.token
+ExecStart=/opt/entropy-bot/current/venv/bin/python -m entropy_bot guardian
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=entropy-bot
+RuntimeDirectoryMode=0700
+StateDirectory=entropy-bot
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/entropy-bot /var/lib/entropy-bot
+
+[Install]
+WantedBy=multi-user.target

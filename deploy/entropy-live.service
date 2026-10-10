@@ -1,0 +1,38 @@
+[Unit]
+Description=Entropy io:SNDK market maker ($12, isolated 1x)
+After=network-online.target entropy-guardian.service
+Requires=entropy-guardian.service
+BindsTo=entropy-guardian.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=entropy-bot
+Group=entropy-bot
+WorkingDirectory=/opt/entropy-bot/current/app
+EnvironmentFile=/etc/entropy-bot/entropy.env
+LoadCredential=keystore-password:/etc/credstore.encrypted/entropy-grid.cred
+Environment=ENTROPY_CREDENTIAL_FILE=%d/keystore-password
+Environment=COINS=io:SNDK
+Environment=QUOTE_NOTIONAL_USD=12
+Environment=MAX_LEVERAGE=1
+Environment=GUARDIAN_TOKEN_PATH=/run/entropy-bot/guardian-session.token
+ExecStart=/opt/entropy-bot/current/venv/bin/python -m entropy_bot live
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+RuntimeDirectory=entropy-bot
+RuntimeDirectoryMode=0700
+StateDirectory=entropy-bot
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/entropy-bot /var/lib/entropy-bot
+
+[Install]
+WantedBy=multi-user.target
