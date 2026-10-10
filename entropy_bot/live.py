@@ -330,6 +330,7 @@ class LiveQuoter:
     _deadman_unavailable_logged: bool = False
     _uncertain_logged: bool = False
     _last_safety_cancel: float = 0.0
+    _fill_reconcile_pending: bool = False
 
     def __post_init__(self) -> None:
         if not self.notional:
@@ -404,10 +405,15 @@ class LiveQuoter:
             log.warning("fill-diag quotes: %s", exc)
 
     def on_user_fills(self, data: dict[str, Any]) -> None:
-        if self.diag is None:
-            return
         fills = data.get("fills") if isinstance(data, dict) else None
         if not isinstance(fills, list):
+            return
+        if fills and not data.get("isSnapshot"):
+            # A maker fill can leave the opposite opening quote resting. Force an
+            # authoritative position read on the next loop before any new quote.
+            self._fill_reconcile_pending = True
+            self.position_known = False
+        if self.diag is None:
             return
         try:
             self.diag.ingest_fills(fills, self.peek_book, prime=bool(data.get("isSnapshot")))
@@ -1063,6 +1069,12 @@ class LiveQuoter:
 
     def step(self, feed: BookFeed | None) -> None:
         self._feed = feed
+        if self._fill_reconcile_pending:
+            if self.refresh_positions(force=True):
+                self.cancel_coin_rests(refetch=False)
+                self._fill_reconcile_pending = False
+            else:
+                return
         try:
             self.refresh_positions()
         except Exception as exc:  # noqa: BLE001

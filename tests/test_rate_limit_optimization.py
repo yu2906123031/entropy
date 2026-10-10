@@ -137,6 +137,21 @@ def test_opening_blocked_during_info_cooldown_reduce_only_allowed(tmp_path):
     assert "resp" in q._place(COIN, closing)
 
 
+def test_ws_fill_marks_position_unknown_for_immediate_reconcile(tmp_path):
+    q = object.__new__(LiveQuoter)
+    q.diag = None
+    q._fill_reconcile_pending = False
+    q.position_known = True
+    q.on_user_fills({"fills": [{"coin": COIN}], "isSnapshot": False})
+    assert q._fill_reconcile_pending
+    assert not q.position_known
+    q._fill_reconcile_pending = False
+    q.position_known = True
+    q.on_user_fills({"fills": [{"coin": COIN}], "isSnapshot": True})
+    assert not q._fill_reconcile_pending
+    assert q.position_known
+
+
 def test_deadman_unavailable_uses_long_retry_interval(tmp_path, monkeypatch):
     class Client:
         def post_exchange(self, _payload): return {"status": "err"}
