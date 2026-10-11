@@ -19,6 +19,9 @@ Environment=QUOTE_NOTIONAL_USD=25
 Environment=QUOTE_NOTIONAL_MIN_USD=20
 Environment=QUOTE_NOTIONAL_MAX_USD=30
 Environment=MAX_LEVERAGE=1
+Environment=MIN_EXIT_EDGE_TICKS=1
+Environment=FLATTEN_FAR_S=120
+Environment=FLATTEN_TAKE_S=300
 Environment=GUARDIAN_TOKEN_PATH=/run/entropy-bot/guardian-session.token
 ExecStart=/opt/entropy-bot/current/venv/bin/python -m entropy_bot live
 Restart=on-failure
