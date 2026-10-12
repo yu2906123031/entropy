@@ -1,5 +1,5 @@
 [Unit]
-Description=Entropy io:SNDK market maker ($20-$30 randomized, isolated 1x)
+Description=Entropy io:ANTH market maker ($20-$30 randomized, isolated 1x)
 After=network-online.target entropy-guardian.service
 Requires=entropy-guardian.service
 BindsTo=entropy-guardian.service
@@ -14,7 +14,7 @@ WorkingDirectory=/opt/entropy-bot/current/app
 EnvironmentFile=/etc/entropy-bot/entropy.env
 LoadCredentialEncrypted=cred:/etc/credstore.encrypted/entropy-grid.cred
 Environment=ENTROPY_CREDENTIAL_FILE=%d/cred
-Environment=COINS=io:SNDK
+Environment=COINS=io:ANTH
 Environment=QUOTE_NOTIONAL_USD=25
 Environment=QUOTE_NOTIONAL_MIN_USD=20
 Environment=QUOTE_NOTIONAL_MAX_USD=30
