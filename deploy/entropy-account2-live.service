@@ -27,6 +27,7 @@ Environment=FLATTEN_FAR_S=120
 Environment=FLATTEN_TAKE_S=900
 Environment=FLATTEN_HARD_S=3600
 Environment=IOC_MAX_LOSS_TICKS=2
+Environment=STOP_LOSS_BPS=100
 Environment=ENTROPY_STATE_DIR=/var/lib/entropy-bot-account2
 Environment=ENTROPY_INTENT_DB=/var/lib/entropy-bot-account2/intents.sqlite3
 Environment=GUARDIAN_READY_PATH=/run/entropy-bot-account2/guardian-ready.json

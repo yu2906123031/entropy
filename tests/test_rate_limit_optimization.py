@@ -128,6 +128,22 @@ def test_soft_ioc_waits_on_large_loss_and_hard_deadline_exits():
     assert hard.sell_px == pytest.approx(1588.0)
 
 
+def test_stop_loss_forces_immediate_reduce_only_ioc():
+    market = Market(COIN, 200002, 0, 10, 4, 10, True, "isolated", True, 1.0, False, 0)
+    top = BookTop(COIN, 1572.8, 1572.9, 1, 1, 1572.85, 1,
+                  bid_px="1572.8", ask_px="1572.9")
+    plan = quote_plan(
+        market, top, szi=0.01, age_ms=1_000, notional_usd=100,
+        flatten_far_ms=120_000, flatten_take_ms=900_000,
+        flatten_hard_ms=3_600_000, ioc_max_loss_ticks=2,
+        stop_loss_bps=100, entry_px=1588.8, min_exit_edge_ticks=1,
+    )
+    assert plan.take
+    assert plan.tif == "Ioc"
+    assert plan.intents[0].reduce_only
+    assert plan.sell_px == pytest.approx(1572.8)
+
+
 def test_opening_blocked_during_info_cooldown_reduce_only_allowed(tmp_path):
     class Client:
         def info_cooldown_active(self): return True

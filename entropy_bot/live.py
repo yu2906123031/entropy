@@ -650,6 +650,7 @@ class LiveQuoter:
             flatten_take_ms=int(getattr(self.settings, "flatten_take_s", 120.0) * 1000),
             flatten_hard_ms=int(getattr(self.settings, "flatten_hard_s", 3600.0) * 1000),
             ioc_max_loss_ticks=getattr(self.settings, "ioc_max_loss_ticks", 2),
+            stop_loss_bps=getattr(self.settings, "stop_loss_bps", 0.0),
             entry_px=self.entry_px.get(coin, 0.0),
             min_exit_edge_ticks=getattr(self.settings, "min_exit_edge_ticks", 2),
         )

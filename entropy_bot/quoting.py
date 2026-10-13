@@ -300,6 +300,7 @@ def quote_plan(
     flatten_take_ms: int = FLAT_TAKE_MS,
     flatten_hard_ms: int | None = None,
     ioc_max_loss_ticks: int = 0,
+    stop_loss_bps: float = 0.0,
     entry_px: float = 0.0,
     min_exit_edge_ticks: int = 0,
 ) -> QuotePlan:
@@ -322,8 +323,16 @@ def quote_plan(
                 )
         return QuotePlan(market.coin, "flat", "flat", "Alo", False, intents, 0, 0.0, buy_px, sell_px)
 
+    stop_loss = False
+    if entry_px > 0 and stop_loss_bps > 0:
+        exit_px = top.bid if szi > 0 else top.ask
+        if exit_px is not None:
+            adverse_bps = max(0.0, (entry_px - exit_px) / entry_px * 10_000) if szi > 0 else max(0.0, (exit_px - entry_px) / entry_px * 10_000)
+            stop_loss = adverse_bps >= stop_loss_bps
+    if stop_loss:
+        stage = "take"
     take = stage == "take"
-    if take and flatten_hard_ms is not None and age_ms < flatten_hard_ms and entry_px > 0:
+    if take and not stop_loss and flatten_hard_ms is not None and age_ms < flatten_hard_ms and entry_px > 0:
         tick = top.inferred_tick(market.sz_decimals)
         exit_px = top.bid if szi > 0 else top.ask
         if exit_px is not None and tick > 0:
