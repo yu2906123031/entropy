@@ -43,6 +43,17 @@ def test_settings_validates_proxy_and_repr_redacts(monkeypatch, tmp_path):
     assert "secret" not in repr(settings)
 
 
+def test_settings_loads_proxy_from_credential_file(monkeypatch, tmp_path):
+    proxy_file = tmp_path / "proxy"
+    proxy_file.write_text("http://user:pass@127.0.0.1:8080\n")
+    monkeypatch.delenv("OUTBOUND_PROXY_URL", raising=False)
+    monkeypatch.setenv("OUTBOUND_PROXY_FILE", str(proxy_file))
+    monkeypatch.setenv("ENTROPY_INTENT_DB", str(tmp_path / "intents.db"))
+    settings = load_settings(load_private_key=False)
+    assert settings.outbound_proxy_url == "http://user:pass@127.0.0.1:8080"
+    assert "secret" not in repr(settings)
+
+
 def test_http_and_websocket_clients_receive_same_explicit_proxy():
     raw = "http://alice:secret@127.0.0.1:3128"
     client = InfoClient("https://api.hyperliquid.xyz", proxy_url=raw)

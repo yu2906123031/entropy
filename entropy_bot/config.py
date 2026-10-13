@@ -217,6 +217,16 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
     if not _official_endpoint(api_url, "https") or not _official_endpoint(ws_url, "wss", "/ws"):
         raise ConfigError("only official Hyperliquid HTTP/WS endpoints are allowed")
     outbound_proxy_url = _optional_env("OUTBOUND_PROXY_URL")
+    proxy_file = _optional_env("OUTBOUND_PROXY_FILE")
+    if outbound_proxy_url is not None and proxy_file is not None:
+        raise ConfigError("set only one of OUTBOUND_PROXY_URL or OUTBOUND_PROXY_FILE")
+    if proxy_file is not None:
+        try:
+            outbound_proxy_url = Path(proxy_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError("could not load outbound proxy credential") from exc
+        if not outbound_proxy_url:
+            raise ConfigError("outbound proxy credential is empty")
     if outbound_proxy_url is not None:
         parse_proxy_url(outbound_proxy_url)
     live = _truthy(os.environ.get("LIVE"))

@@ -12,8 +12,9 @@ User=entropy-bot
 Group=entropy-bot
 WorkingDirectory=/opt/entropy-bot/current/app
 EnvironmentFile=/etc/entropy-bot/account2.env
-LoadCredentialEncrypted=cred:/etc/credstore.encrypted/entropy-account2-grid.cred
+LoadCredentialEncrypted=cred:/etc/credstore.encrypted/entropy-account2-grid.cred proxy:/etc/credstore.encrypted/entropy-account2-proxy.cred
 Environment=ENTROPY_CREDENTIAL_FILE=%d/cred
+Environment=OUTBOUND_PROXY_FILE=%d/proxy
 Environment=ENTROPY_KEYSTORE_PATH=/etc/entropy-bot/account2-agent-keystore.json
 Environment=COINS=io:ANTH
 Environment=QUOTE_NOTIONAL_USD=75
