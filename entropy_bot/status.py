@@ -93,7 +93,7 @@ def format_status(
 
 
 def run_status(settings: Settings) -> int:
-    client = InfoClient(settings.api_url)
+    client = InfoClient(settings.api_url, proxy_url=getattr(settings, "outbound_proxy_url", None))
     try:
         meta, markets, ctxs = load_io_markets(client, settings.coins)
         dex = perp_dex_info(client.perp_dexs(), ALLOWED_DEX)

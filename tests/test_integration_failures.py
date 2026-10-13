@@ -69,7 +69,7 @@ def run_guardian_case(monkeypatch, tmp_path, responses):
         real_atomic(path, row)
     monkeypatch.setattr(guardian_mod, "atomic_json", record_atomic)
     def sleep(_seconds): clock["now"] += 1
-    rc = run_guardian(settings(tmp_path), seconds=20, client_factory=lambda _url: client,
+    rc = run_guardian(settings(tmp_path), seconds=20, client_factory=lambda _url, **_kwargs: client,
                       signer_factory=Signer, sleep=sleep)
     return rc, json.loads((tmp_path / "ready.json").read_text()), readiness
 

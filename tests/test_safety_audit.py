@@ -22,7 +22,7 @@ from entropy_bot.ws import BookFeed
 
 def clean_env(monkeypatch, tmp_path):
     for key in list(os.environ):
-        if key.startswith(("HYPERLIQUID_", "ENTROPY_", "GUARDIAN_", "QUOTE_", "MAX_", "MIN_", "COINS", "LIVE", "FEE_", "REFERRAL_", "MAKER_")):
+        if key.startswith(("HYPERLIQUID_", "ENTROPY_", "GUARDIAN_", "OUTBOUND_", "QUOTE_", "MAX_", "MIN_", "COINS", "LIVE", "FEE_", "REFERRAL_", "MAKER_")):
             monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("ENTROPY_INTENT_DB", str(tmp_path / "intents.db"))
 

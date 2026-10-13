@@ -28,7 +28,7 @@ log = logging.getLogger("entropy_bot.paper")
 
 
 def run_paper(settings: Settings, *, seconds: float | None = None) -> int:
-    client = InfoClient(settings.api_url)
+    client = InfoClient(settings.api_url, proxy_url=getattr(settings, "outbound_proxy_url", None))
     try:
         _meta, markets, _ctxs = load_io_markets(client, settings.coins)
         dex = perp_dex_info(client.perp_dexs(), ALLOWED_DEX)
@@ -113,7 +113,8 @@ def run_paper(settings: Settings, *, seconds: float | None = None) -> int:
             top.spread_bps or -1,
         )
 
-    feed = BookFeed(settings.ws_url, settings.coins, on_book)
+    feed = BookFeed(settings.ws_url, settings.coins, on_book,
+                    proxy_url=getattr(settings, "outbound_proxy_url", None))
     feed.start()
     if not feed.wait_ready():
         log.error("websocket did not become ready")

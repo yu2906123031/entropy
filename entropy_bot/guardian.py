@@ -88,13 +88,13 @@ def run_guardian(
     settings: Settings,
     *,
     seconds: float | None = None,
-    client_factory: Callable[[str], InfoClient] = InfoClient,
+    client_factory: Callable[..., InfoClient] = InfoClient,
     signer_factory: Callable[..., LiveSigner] = LiveSigner,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     require_signer(settings)
     signer = signer_factory(settings.private_key or "", settings.account, nonce_dir=settings.state_dir)
-    client = client_factory(settings.api_url)
+    client = client_factory(settings.api_url, proxy_url=getattr(settings, "outbound_proxy_url", None))
     stop = {"flag": False}
     signal.signal(signal.SIGINT, lambda *_: stop.__setitem__("flag", True))
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))

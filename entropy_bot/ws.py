@@ -13,6 +13,7 @@ import certifi
 import websocket
 
 from entropy_bot.coins import assert_no_foreign_venue, assert_tradable
+from entropy_bot.proxy import ProxyConfig, parse_proxy_url
 
 log = logging.getLogger("entropy_bot.ws")
 
@@ -28,12 +29,14 @@ class BookFeed:
         on_book: BookCallback,
         user: str | None = None,
         on_user_fills: UserFillsCallback | None = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.ws_url = ws_url
         self.coins = tuple(assert_tradable(c) for c in coins)
         self.on_book = on_book
         self.user = user
         self.on_user_fills = on_user_fills
+        self.proxy: ProxyConfig | None = parse_proxy_url(proxy_url) if proxy_url else None
         self.books: dict[str, dict[str, Any]] = {}
         self.book_ts: dict[str, float] = {}
         self.last_msg_ts: float = 0.0
@@ -83,11 +86,19 @@ class BookFeed:
     def _run(self) -> None:
         assert self._ws is not None
         while not self._stop.is_set():
-            self._ws.run_forever(
-                http_proxy_host="",
-                http_proxy_port=0,
-                sslopt={"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": certifi.where()},
-            )
+            kwargs: dict[str, Any] = {
+                "sslopt": {"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": certifi.where()},
+            }
+            if self.proxy is None:
+                kwargs.update(http_proxy_host="", http_proxy_port=0)
+            else:
+                kwargs.update(
+                    http_proxy_host=self.proxy.host,
+                    http_proxy_port=self.proxy.port,
+                    http_proxy_auth=self.proxy.auth,
+                    proxy_type="http",
+                )
+            self._ws.run_forever(**kwargs)
             if self._stop.is_set():
                 break
             time.sleep(2.0)
@@ -98,7 +109,10 @@ class BookFeed:
                 if self._ws and self._ws.sock and self._ws.sock.connected:
                     self._ws.send(json.dumps({"method": "ping"}))
             except Exception as exc:  # noqa: BLE001
-                log.debug("ws ping failed: %s", exc)
+                if self.proxy is not None:
+                    log.debug("ws configured proxy ping failed: %s", type(exc).__name__)
+                else:
+                    log.debug("ws ping failed: %s", exc)
 
     def _on_open(self, ws: websocket.WebSocketApp) -> None:
         with self._lock:
@@ -168,7 +182,10 @@ class BookFeed:
         self.on_book(coin, data)
 
     def _on_error(self, _ws: websocket.WebSocketApp, error: Any) -> None:
-        log.warning("ws error: %s", error)
+        if self.proxy is not None:
+            log.warning("ws configured proxy error: %s", type(error).__name__)
+        else:
+            log.warning("ws error: %s", error)
 
     def _on_close(self, *_args: Any) -> None:
         with self._lock:

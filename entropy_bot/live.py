@@ -1228,6 +1228,7 @@ def run_live(settings: Settings, *, seconds: float | None = None) -> int:
         info_min_interval_s=getattr(settings, "info_min_interval_s", 0.5),
         cooldown_base_s=getattr(settings, "info_cooldown_base_s", 15.0),
         cooldown_max_s=getattr(settings, "info_cooldown_max_s", 120.0),
+        proxy_url=getattr(settings, "outbound_proxy_url", None),
     )
     feed: BookFeed | None = None
     quoter: LiveQuoter | None = None
@@ -1338,6 +1339,7 @@ def run_live(settings: Settings, *, seconds: float | None = None) -> int:
             quoter.on_book,
             user=signer.account,
             on_user_fills=quoter.on_user_fills,
+            proxy_url=getattr(settings, "outbound_proxy_url", None),
         )
         quoter._feed = feed
         feed.start()

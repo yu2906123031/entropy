@@ -202,6 +202,18 @@ explicit production action.
 | `MAKER_REBATE_BPS` | unset | Optional HL ALO maker-share rebate in bp |
 | `HYPERLIQUID_API_URL` | official mainnet | Official host required |
 | `HYPERLIQUID_WS_URL` | official mainnet | Official host required |
+| `OUTBOUND_PROXY_URL` | unset | Explicit `http://[user:pass@]host:port` CONNECT proxy for both HTTP and WSS; ambient proxy variables are ignored and credentials are redacted |
+
+### Independent account2 unit templates
+
+`deploy/entropy-account2-live.service` and `deploy/entropy-account2-guardian.service`
+provide a separate `io:ANTH` instance with a randomized $50–$100 cycle notional
+and requested isolated 5x leverage (capped to the live market maximum). The units
+use `/etc/entropy-bot/account2.env`, the encrypted credential
+`/etc/credstore.encrypted/entropy-account2-grid.cred`, and the encrypted keystore
+`/etc/entropy-bot/account2-agent-keystore.json`. Runtime, state, intent WAL, lease,
+readiness, and guardian token paths all use the `entropy-bot-account2` namespace.
+The installer copies these templates while leaving every unit stopped and disabled.
 
 Markets are **isolated-only**. Live sets isolated leverage per coin and never uses cross. Default TIF is ALO for two-sided quotes; flatten ≥15s may IOC take.
 

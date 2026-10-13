@@ -1,0 +1,60 @@
+[Unit]
+Description=Entropy account2 independent EBOT cancellation guardian
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=entropy-bot
+Group=entropy-bot
+WorkingDirectory=/opt/entropy-bot/current/app
+EnvironmentFile=/etc/entropy-bot/account2.env
+LoadCredentialEncrypted=cred:/etc/credstore.encrypted/entropy-account2-grid.cred
+Environment=ENTROPY_CREDENTIAL_FILE=%d/cred
+Environment=ENTROPY_KEYSTORE_PATH=/etc/entropy-bot/account2-agent-keystore.json
+Environment=ENTROPY_STATE_DIR=/var/lib/entropy-bot-account2
+Environment=ENTROPY_INTENT_DB=/var/lib/entropy-bot-account2/intents.sqlite3
+Environment=GUARDIAN_READY_PATH=/run/entropy-bot-account2/guardian-ready.json
+Environment=GUARDIAN_LEASE_PATH=/run/entropy-bot-account2/main-lease.json
+Environment=GUARDIAN_TOKEN_PATH=/run/entropy-bot-account2/guardian-session.token
+ExecStart=/opt/entropy-bot/current/venv/bin/python -m entropy_bot guardian
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=entropy-bot-account2
+RuntimeDirectoryMode=0700
+StateDirectory=entropy-bot-account2
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+TasksMax=64
+MemoryMax=512M
+ReadOnlyPaths=/etc/entropy-bot/account2-agent-keystore.json
+ReadWritePaths=/run/entropy-bot-account2 /var/lib/entropy-bot-account2
+
+[Install]
+WantedBy=multi-user.target

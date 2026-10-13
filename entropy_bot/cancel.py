@@ -14,7 +14,7 @@ log = logging.getLogger("entropy_bot.cancel")
 def run_cancel(settings: Settings) -> int:
     require_signer(settings)
     signer = LiveSigner(settings.private_key or "", settings.account, nonce_dir=settings.state_dir)
-    client = InfoClient(settings.api_url)
+    client = InfoClient(settings.api_url, proxy_url=getattr(settings, "outbound_proxy_url", None))
     try:
         _meta, markets, _ctxs = load_io_markets(client, settings.coins)
         orders = client.open_orders(signer.account, ALLOWED_DEX, optional=True)

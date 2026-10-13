@@ -59,7 +59,10 @@ mv -Tf "$PREFIX/.current-$GIT_COMMIT" "$PREFIX/current"
 
 install -D -m 0644 "$RELEASE/app/deploy/entropy-guardian.service" "$UNIT_DIR/entropy-guardian.service"
 install -D -m 0644 "$RELEASE/app/deploy/entropy-live.service" "$UNIT_DIR/entropy-live.service"
+install -D -m 0644 "$RELEASE/app/deploy/entropy-account2-guardian.service" "$UNIT_DIR/entropy-account2-guardian.service"
+install -D -m 0644 "$RELEASE/app/deploy/entropy-account2-live.service" "$UNIT_DIR/entropy-account2-live.service"
 if command -v systemd-analyze >/dev/null 2>&1; then
-  systemd-analyze verify "$UNIT_DIR/entropy-guardian.service" "$UNIT_DIR/entropy-live.service"
+  systemd-analyze verify "$UNIT_DIR/entropy-guardian.service" "$UNIT_DIR/entropy-live.service" \
+    "$UNIT_DIR/entropy-account2-guardian.service" "$UNIT_DIR/entropy-account2-live.service"
 fi
 printf 'installed immutable release %s; units remain stopped and disabled\n' "$RELEASE"

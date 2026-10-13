@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,6 +22,7 @@ from entropy_bot.fees import (
     entropy_program,
     rates_for_tier,
 )
+from entropy_bot.proxy import parse_proxy_url
 
 DEFAULT_API_URL = "https://api.hyperliquid.xyz"
 DEFAULT_WS_URL = "wss://api.hyperliquid.xyz/ws"
@@ -49,6 +50,7 @@ class Settings:
     max_leverage: int
     api_url: str
     ws_url: str
+    outbound_proxy_url: str | None = field(default=None, repr=False)
     fee_tier: int = DEFAULT_FEE_TIER
     referral_discount: float = 0.0
     maker_rebate_bps: float | None = None
@@ -214,6 +216,9 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
     ws_url = _optional_env("HYPERLIQUID_WS_URL") or DEFAULT_WS_URL
     if not _official_endpoint(api_url, "https") or not _official_endpoint(ws_url, "wss", "/ws"):
         raise ConfigError("only official Hyperliquid HTTP/WS endpoints are allowed")
+    outbound_proxy_url = _optional_env("OUTBOUND_PROXY_URL")
+    if outbound_proxy_url is not None:
+        parse_proxy_url(outbound_proxy_url)
     live = _truthy(os.environ.get("LIVE"))
     if live and (fee_tier != 0 or referral != 0 or rebate_bps is not None or
                  entropy_self_rebate != 0 or entropy_referred != 0):
@@ -235,6 +240,7 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         max_leverage=max_lev,
         api_url=api_url.rstrip("/"),
         ws_url=ws_url,
+        outbound_proxy_url=outbound_proxy_url,
         fee_tier=fee_tier,
         referral_discount=referral,
         maker_rebate_bps=rebate_bps,

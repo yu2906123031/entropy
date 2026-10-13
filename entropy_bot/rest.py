@@ -12,6 +12,7 @@ import requests
 
 from entropy_bot.coins import ALLOWED_DEX, assert_no_foreign_venue, assert_tradable
 from entropy_bot.errors import RateLimited, RequestWeightLimited, error_text, is_weight_limit_error
+from entropy_bot.proxy import parse_proxy_url
 
 log = logging.getLogger("entropy_bot.rest")
 
@@ -25,11 +26,16 @@ class InfoClient:
     def __init__(self, base_url: str, *, timeout: float = DEFAULT_TIMEOUT,
                  info_min_interval_s: float = INFO_PAUSE_S,
                  cooldown_base_s: float = INFO_COOLDOWN_BASE_S,
-                 cooldown_max_s: float = INFO_COOLDOWN_MAX_S) -> None:
+                 cooldown_max_s: float = INFO_COOLDOWN_MAX_S,
+                 proxy_url: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
         self.session.trust_env = False
+        self._uses_proxy = proxy_url is not None
+        if proxy_url:
+            proxy = parse_proxy_url(proxy_url)
+            self.session.proxies.update({"http": proxy.url, "https": proxy.url})
         self._perp_dexs: list[Any] | None = None
         self._meta: dict[str, Any] | None = None
         self._meta_and_ctxs: Any | None = None
@@ -99,8 +105,13 @@ class InfoClient:
                         self._info_429_logged = True
             except requests.RequestException as exc:
                 if optional:
-                    log.warning("info request failed: %s", exc)
+                    if self._uses_proxy:
+                        log.warning("info request via configured proxy failed: %s", type(exc).__name__)
+                    else:
+                        log.warning("info request failed: %s", exc)
                     return None
+                if self._uses_proxy:
+                    raise requests.RequestException("info request via configured proxy failed") from exc
                 raise
             finally:
                 self._last_info_at = time.monotonic()
@@ -218,7 +229,8 @@ class InfoClient:
                 url, json=payload, timeout=self.timeout, allow_redirects=False
             )
         except requests.RequestException as exc:
-            raise RateLimited(f"exchange request failed: {exc}") from exc
+            detail = "configured proxy transport failure" if self._uses_proxy else str(exc)
+            raise RateLimited(f"exchange request failed: {detail}") from exc
         if 300 <= response.status_code < 400 or response.url != url:
             raise RateLimited("exchange endpoint redirect or URL mismatch")
         if response.status_code == 429:
