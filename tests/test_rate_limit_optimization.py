@@ -104,6 +104,30 @@ def test_maker_exit_requires_two_tick_edge_then_ioc_can_cross():
     assert take.sell_px == pytest.approx(1588.8)
 
 
+def test_soft_ioc_waits_on_large_loss_and_hard_deadline_exits():
+    market = Market(COIN, 200002, 0, 10, 4, 10, True, "isolated", True, 1.0, False, 0)
+    top = BookTop(COIN, 1588.0, 1588.1, 1, 1, 1588.05, 1,
+                  bid_px="1588.0", ask_px="1588.1")
+    waiting = quote_plan(
+        market, top, szi=0.0075, age_ms=900_000, notional_usd=20,
+        flatten_far_ms=120_000, flatten_take_ms=900_000,
+        flatten_hard_ms=3_600_000, ioc_max_loss_ticks=2,
+        entry_px=1588.8, min_exit_edge_ticks=1,
+    )
+    assert waiting.tif == "Alo"
+    assert not waiting.take
+    assert waiting.sell_px == pytest.approx(1588.9)
+    hard = quote_plan(
+        market, top, szi=0.0075, age_ms=3_600_000, notional_usd=20,
+        flatten_far_ms=120_000, flatten_take_ms=900_000,
+        flatten_hard_ms=3_600_000, ioc_max_loss_ticks=2,
+        entry_px=1588.8, min_exit_edge_ticks=1,
+    )
+    assert hard.tif == "Ioc"
+    assert hard.take
+    assert hard.sell_px == pytest.approx(1588.0)
+
+
 def test_opening_blocked_during_info_cooldown_reduce_only_allowed(tmp_path):
     class Client:
         def info_cooldown_active(self): return True

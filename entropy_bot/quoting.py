@@ -298,6 +298,8 @@ def quote_plan(
     notional_usd: float,
     flatten_far_ms: int = FLAT_FAR_MS,
     flatten_take_ms: int = FLAT_TAKE_MS,
+    flatten_hard_ms: int | None = None,
+    ioc_max_loss_ticks: int = 0,
     entry_px: float = 0.0,
     min_exit_edge_ticks: int = 0,
 ) -> QuotePlan:
@@ -321,6 +323,14 @@ def quote_plan(
         return QuotePlan(market.coin, "flat", "flat", "Alo", False, intents, 0, 0.0, buy_px, sell_px)
 
     take = stage == "take"
+    if take and flatten_hard_ms is not None and age_ms < flatten_hard_ms and entry_px > 0:
+        tick = top.inferred_tick(market.sz_decimals)
+        exit_px = top.bid if szi > 0 else top.ask
+        if exit_px is not None and tick > 0:
+            adverse_ticks = max(0.0, (entry_px - exit_px) / tick) if szi > 0 else max(0.0, (exit_px - entry_px) / tick)
+            if adverse_ticks > ioc_max_loss_ticks:
+                stage = "mid"
+                take = False
     tif = "Ioc" if take else "Alo"
     raw = flatten_prices(market, top, stage)
     if raw is None:

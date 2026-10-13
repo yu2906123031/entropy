@@ -31,6 +31,8 @@ DEFAULT_MAX_LEVERAGE = 1
 DEFAULT_MIN_REPLACE_S = 12.0
 DEFAULT_FLATTEN_FAR_S = 60.0
 DEFAULT_FLATTEN_TAKE_S = 120.0
+DEFAULT_FLATTEN_HARD_S = 3600.0
+DEFAULT_IOC_MAX_LOSS_TICKS = 2
 DEFAULT_MIN_EXIT_EDGE_TICKS = 2
 MIN_ORDER_USD = 10.0
 DEFAULT_INTENT_DB_PATH = "~/.local/state/entropy-bot/intents.sqlite3"
@@ -64,6 +66,8 @@ class Settings:
     guardian_poll_s: float = 1.0
     flatten_far_s: float = DEFAULT_FLATTEN_FAR_S
     flatten_take_s: float = DEFAULT_FLATTEN_TAKE_S
+    flatten_hard_s: float = DEFAULT_FLATTEN_HARD_S
+    ioc_max_loss_ticks: int = DEFAULT_IOC_MAX_LOSS_TICKS
     position_reconcile_s: float = 10.0
     open_orders_reconcile_s: float = 15.0
     fill_reconcile_s: float = 60.0
@@ -162,6 +166,8 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         guardian_poll_s = float(os.environ.get("GUARDIAN_POLL_S", "1"))
         flatten_far_s = float(os.environ.get("FLATTEN_FAR_S", DEFAULT_FLATTEN_FAR_S))
         flatten_take_s = float(os.environ.get("FLATTEN_TAKE_S", DEFAULT_FLATTEN_TAKE_S))
+        flatten_hard_s = float(os.environ.get("FLATTEN_HARD_S", DEFAULT_FLATTEN_HARD_S))
+        ioc_max_loss_ticks = int(os.environ.get("IOC_MAX_LOSS_TICKS", DEFAULT_IOC_MAX_LOSS_TICKS))
         position_reconcile_s = float(os.environ.get("POSITION_RECONCILE_S", "10"))
         open_orders_reconcile_s = float(os.environ.get("OPEN_ORDERS_RECONCILE_S", "15"))
         fill_reconcile_s = float(os.environ.get("FILL_RECONCILE_S", "60"))
@@ -174,7 +180,7 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         min_exit_edge_ticks = int(os.environ.get("MIN_EXIT_EDGE_TICKS", DEFAULT_MIN_EXIT_EDGE_TICKS))
     except ValueError as exc:
         raise ConfigError(f"invalid numeric config: {exc}") from exc
-    floats = (notional, notional_min, notional_max, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
+    floats = (notional, notional_min, notional_max, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, flatten_hard_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
     if rebate_bps is not None:
         floats += (rebate_bps,)
     if not all(math.isfinite(value) for value in floats):
@@ -189,6 +195,8 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         raise ConfigError("guardian timing must be finite and positive")
     if flatten_far_s < 0 or flatten_take_s <= flatten_far_s:
         raise ConfigError("FLATTEN_TAKE_S must be greater than FLATTEN_FAR_S >= 0")
+    if flatten_hard_s <= flatten_take_s or ioc_max_loss_ticks < 0:
+        raise ConfigError("FLATTEN_HARD_S must exceed FLATTEN_TAKE_S and IOC_MAX_LOSS_TICKS must be >= 0")
     if min(position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s,
            deadman_retry_s, shutdown_retry_s) <= 0 or shutdown_cancel_attempts < 1:
         raise ConfigError("reconciliation, retry, and shutdown timing must be positive")
@@ -244,6 +252,8 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         guardian_poll_s=guardian_poll_s,
         flatten_far_s=flatten_far_s,
         flatten_take_s=flatten_take_s,
+        flatten_hard_s=flatten_hard_s,
+        ioc_max_loss_ticks=ioc_max_loss_ticks,
         position_reconcile_s=position_reconcile_s,
         open_orders_reconcile_s=open_orders_reconcile_s,
         fill_reconcile_s=fill_reconcile_s,
