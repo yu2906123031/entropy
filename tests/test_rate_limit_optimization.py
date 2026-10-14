@@ -128,6 +128,36 @@ def test_soft_ioc_waits_on_large_loss_and_hard_deadline_exits():
     assert hard.sell_px == pytest.approx(1588.0)
 
 
+def test_hard_ioc_can_exit_one_quarter_of_cycle_notional():
+    market = Market(COIN, 200002, 0, 10, 4, 10, True, "isolated", True, 1.0, False, 0)
+    top = BookTop(COIN, 2000.0, 2000.1, 1, 1, 2000.05, 1,
+                  bid_px="2000.0", ask_px="2000.1")
+    plan = quote_plan(
+        market, top, szi=0.05, age_ms=3_600_000, notional_usd=100,
+        flatten_far_ms=120_000, flatten_take_ms=900_000,
+        flatten_hard_ms=3_600_000, hard_ioc_fraction=0.25,
+        ioc_max_loss_ticks=2, entry_px=2010.0, min_exit_edge_ticks=1,
+    )
+    assert plan.take
+    assert plan.tif == "Ioc"
+    assert plan.intents[0].reduce_only
+    assert plan.intents[0].sz == pytest.approx(0.0125)
+
+
+def test_stop_loss_ignores_hard_ioc_tranche_fraction():
+    market = Market(COIN, 200002, 0, 10, 4, 10, True, "isolated", True, 1.0, False, 0)
+    top = BookTop(COIN, 1979.8, 1979.9, 1, 1, 1979.85, 1,
+                  bid_px="1979.8", ask_px="1979.9")
+    plan = quote_plan(
+        market, top, szi=0.05, age_ms=1_000, notional_usd=100,
+        flatten_far_ms=120_000, flatten_take_ms=900_000,
+        flatten_hard_ms=3_600_000, hard_ioc_fraction=0.25,
+        stop_loss_bps=100, entry_px=2000.0, min_exit_edge_ticks=1,
+    )
+    assert plan.take
+    assert plan.intents[0].sz == pytest.approx(0.05)
+
+
 def test_stop_loss_forces_immediate_reduce_only_ioc():
     market = Market(COIN, 200002, 0, 10, 4, 10, True, "isolated", True, 1.0, False, 0)
     top = BookTop(COIN, 1572.8, 1572.9, 1, 1, 1572.85, 1,

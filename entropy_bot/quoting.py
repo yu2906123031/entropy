@@ -301,6 +301,7 @@ def quote_plan(
     flatten_hard_ms: int | None = None,
     ioc_max_loss_ticks: int = 0,
     stop_loss_bps: float = 0.0,
+    hard_ioc_fraction: float = 1.0,
     entry_px: float = 0.0,
     min_exit_edge_ticks: int = 0,
 ) -> QuotePlan:
@@ -332,6 +333,7 @@ def quote_plan(
     if stop_loss:
         stage = "take"
     take = stage == "take"
+    hard_take = bool(take and not stop_loss and flatten_hard_ms is not None and age_ms >= flatten_hard_ms)
     if take and not stop_loss and flatten_hard_ms is not None and age_ms < flatten_hard_ms and entry_px > 0:
         tick = top.inferred_tick(market.sz_decimals)
         exit_px = top.bid if szi > 0 else top.ask
@@ -360,7 +362,8 @@ def quote_plan(
                     market.sz_decimals,
                     side="ask",
                 )
-        notional_sz = size_from_notional(notional_usd, sell_raw, market.sz_decimals)
+        hard_notional = notional_usd * hard_ioc_fraction if hard_take else notional_usd
+        notional_sz = size_from_notional(hard_notional, sell_raw, market.sz_decimals)
         sz = flatten_size(abs(szi), notional_sz, market.sz_decimals)
         if sz > 0:
             sell_px = sell_raw
@@ -381,7 +384,8 @@ def quote_plan(
                 market.sz_decimals,
                 side="bid",
             )
-    notional_sz = size_from_notional(notional_usd, buy_raw, market.sz_decimals)
+    hard_notional = notional_usd * hard_ioc_fraction if hard_take else notional_usd
+    notional_sz = size_from_notional(hard_notional, buy_raw, market.sz_decimals)
     sz = flatten_size(abs(szi), notional_sz, market.sz_decimals)
     if sz > 0:
         buy_px = buy_raw

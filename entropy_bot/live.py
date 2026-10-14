@@ -651,6 +651,7 @@ class LiveQuoter:
             flatten_hard_ms=int(getattr(self.settings, "flatten_hard_s", 3600.0) * 1000),
             ioc_max_loss_ticks=getattr(self.settings, "ioc_max_loss_ticks", 2),
             stop_loss_bps=getattr(self.settings, "stop_loss_bps", 0.0),
+            hard_ioc_fraction=getattr(self.settings, "hard_ioc_fraction", 1.0),
             entry_px=self.entry_px.get(coin, 0.0),
             min_exit_edge_ticks=getattr(self.settings, "min_exit_edge_ticks", 2),
         )
@@ -981,7 +982,10 @@ class LiveQuoter:
         same_coverage = have_buy == want_buy and have_sell == want_sell
         if plan.take:
             now = time.time()
-            if now - self.last_take_at.get(coin, 0.0) < IOC_GAP_S:
+            hard_ioc = plan.age_ms >= int(getattr(self.settings, "flatten_hard_s", 3600.0) * 1000)
+            take_gap_s = getattr(self.settings, "hard_ioc_gap_s", 0.0) if hard_ioc else IOC_GAP_S
+            take_gap_s = max(IOC_GAP_S, take_gap_s)
+            if now - self.last_take_at.get(coin, 0.0) < take_gap_s:
                 self.maybe_deadman()
                 return
             log.info("flatten take %s age=%.1fs szi=%s", coin, plan.age_ms / 1000, plan.szi)
