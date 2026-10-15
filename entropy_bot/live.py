@@ -21,6 +21,7 @@ from typing import Any
 
 from entropy_bot.coins import ALLOWED_DEX, Market, perp_dex_info
 from entropy_bot.config import Settings, live_notional, require_live
+from entropy_bot.cooldown import StopLossCooldown
 from entropy_bot.fees import (
     ALO_TIF_NOTE,
     alo_fill_rebate_usd,
@@ -333,6 +334,8 @@ class LiveQuoter:
     _last_safety_cancel: float = 0.0
     _fill_reconcile_pending: bool = False
     _notional_rng: random.Random = field(default_factory=random.SystemRandom, repr=False)
+    stop_loss_cooldown: StopLossCooldown | None = None
+    _cooldown_logged: bool = False
 
     def __post_init__(self) -> None:
         if not self.notional:
@@ -354,6 +357,15 @@ class LiveQuoter:
             self._replace_skip_logged = {coin: False for coin in coins}
         if self.diag is None:
             self.diag = FillDiagnostics(coins)
+        first_pause = getattr(self.settings, "stop_loss_cooldown_s", 0.0)
+        second_pause = getattr(self.settings, "stop_loss_second_cooldown_s", 0.0)
+        if self.stop_loss_cooldown is None and first_pause > 0 and second_pause > 0:
+            self.stop_loss_cooldown = StopLossCooldown(
+                Path(self.settings.state_dir) / "stop-loss-cooldown.json",
+                first_pause,
+                second_pause,
+                getattr(self.settings, "stop_loss_sequence_window_s", 7200.0),
+            )
 
     def _sample_opening_notional(self) -> None:
         low = getattr(self.settings, "quote_notional_min_usd", None)
@@ -962,7 +974,7 @@ class LiveQuoter:
         self._diag_quotes(coin, accepted, take=plan.take)
         if alo_rejected:
             return {"aloReject": True, "resp": resp}
-        return {"resp": resp}
+        return {"resp": resp, "accepted": accepted}
 
     def requote(self, coin: str, top: BookTop) -> None:
         if self._in_weight_backoff():
@@ -970,6 +982,17 @@ class LiveQuoter:
         if not self.refresh_positions():
             self.cancel_coin_rests(refetch=False, only_coin=coin)
             return
+        if abs(self.pos.get(coin, 0.0)) <= 0 and self.stop_loss_cooldown is not None:
+            now = time.time()
+            if self.stop_loss_cooldown.active(now):
+                self.cancel_coin_rests(refetch=False, only_coin=coin)
+                if not self._cooldown_logged:
+                    remain = max(0.0, self.stop_loss_cooldown.cooldown_until - now)
+                    log.warning("stop-loss cooldown suppresses opening quotes %s for %.0fs", coin, remain)
+                    self._cooldown_logged = True
+                self.maybe_deadman()
+                return
+            self._cooldown_logged = False
         if abs(self.pos.get(coin, 0.0)) <= 0 and not self._has_rest(coin):
             self._sample_opening_notional()
         plan = self.plan_for(coin, top)
@@ -999,7 +1022,10 @@ class LiveQuoter:
                 return
             self.last_take_at[coin] = now
             try:
-                self._place(coin, plan)
+                placed = self._place(coin, plan)
+                if plan.stop_loss and placed and placed.get("accepted", 0) > 0 and self.stop_loss_cooldown is not None:
+                    until = self.stop_loss_cooldown.record(time.time())
+                    log.warning("stop-loss fill armed opening cooldown %s until %.0f", coin, until)
             except RequestWeightLimited:
                 log.warning("IOC skipped %s; request-weight backoff", coin)
             except RateLimited:

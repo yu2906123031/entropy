@@ -169,6 +169,7 @@ def test_stop_loss_forces_immediate_reduce_only_ioc():
         stop_loss_bps=100, entry_px=1588.8, min_exit_edge_ticks=1,
     )
     assert plan.take
+    assert plan.stop_loss
     assert plan.tif == "Ioc"
     assert plan.intents[0].reduce_only
     assert plan.sell_px == pytest.approx(1572.8)

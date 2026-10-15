@@ -83,6 +83,7 @@ class QuotePlan:
     szi: float
     buy_px: float | None = None
     sell_px: float | None = None
+    stop_loss: bool = False
 
     def key(self) -> str:
         parts = [
@@ -370,7 +371,7 @@ def quote_plan(
             intents.append(
                 QuoteIntent(market.coin, market.asset_id, False, sell_raw, sz, "A", tif, True, stage)
             )
-        return QuotePlan(market.coin, "long", stage, tif, take, intents, age_ms, szi, None, sell_px)
+        return QuotePlan(market.coin, "long", stage, tif, take, intents, age_ms, szi, None, sell_px, stop_loss)
 
     if not take:
         buy_raw_c = clamp_maker_buy(market, top, buy_raw)
@@ -392,7 +393,7 @@ def quote_plan(
         intents.append(
             QuoteIntent(market.coin, market.asset_id, True, buy_raw, sz, "B", tif, True, stage)
         )
-    return QuotePlan(market.coin, "short", stage, tif, take, intents, age_ms, szi, buy_px, None)
+    return QuotePlan(market.coin, "short", stage, tif, take, intents, age_ms, szi, buy_px, None, stop_loss)
 
 
 def sync_pos_since(

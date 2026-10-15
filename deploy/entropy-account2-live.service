@@ -30,6 +30,9 @@ Environment=IOC_MAX_LOSS_TICKS=2
 Environment=STOP_LOSS_BPS=100
 Environment=HARD_IOC_FRACTION=0.25
 Environment=HARD_IOC_GAP_S=300
+Environment=STOP_LOSS_COOLDOWN_S=1800
+Environment=STOP_LOSS_SECOND_COOLDOWN_S=7200
+Environment=STOP_LOSS_SEQUENCE_WINDOW_S=7200
 Environment=ENTROPY_STATE_DIR=/var/lib/entropy-bot-account2
 Environment=ENTROPY_INTENT_DB=/var/lib/entropy-bot-account2/intents.sqlite3
 Environment=GUARDIAN_READY_PATH=/run/entropy-bot-account2/guardian-ready.json

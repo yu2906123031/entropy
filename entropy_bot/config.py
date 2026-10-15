@@ -37,6 +37,9 @@ DEFAULT_IOC_MAX_LOSS_TICKS = 2
 DEFAULT_STOP_LOSS_BPS = 0.0
 DEFAULT_HARD_IOC_FRACTION = 1.0
 DEFAULT_HARD_IOC_GAP_S = 0.0
+DEFAULT_STOP_LOSS_COOLDOWN_S = 0.0
+DEFAULT_STOP_LOSS_SECOND_COOLDOWN_S = 0.0
+DEFAULT_STOP_LOSS_SEQUENCE_WINDOW_S = 7200.0
 DEFAULT_MIN_EXIT_EDGE_TICKS = 2
 MIN_ORDER_USD = 10.0
 DEFAULT_INTENT_DB_PATH = "~/.local/state/entropy-bot/intents.sqlite3"
@@ -76,6 +79,9 @@ class Settings:
     stop_loss_bps: float = DEFAULT_STOP_LOSS_BPS
     hard_ioc_fraction: float = DEFAULT_HARD_IOC_FRACTION
     hard_ioc_gap_s: float = DEFAULT_HARD_IOC_GAP_S
+    stop_loss_cooldown_s: float = DEFAULT_STOP_LOSS_COOLDOWN_S
+    stop_loss_second_cooldown_s: float = DEFAULT_STOP_LOSS_SECOND_COOLDOWN_S
+    stop_loss_sequence_window_s: float = DEFAULT_STOP_LOSS_SEQUENCE_WINDOW_S
     position_reconcile_s: float = 10.0
     open_orders_reconcile_s: float = 15.0
     fill_reconcile_s: float = 60.0
@@ -179,6 +185,9 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         stop_loss_bps = float(os.environ.get("STOP_LOSS_BPS", DEFAULT_STOP_LOSS_BPS))
         hard_ioc_fraction = float(os.environ.get("HARD_IOC_FRACTION", DEFAULT_HARD_IOC_FRACTION))
         hard_ioc_gap_s = float(os.environ.get("HARD_IOC_GAP_S", DEFAULT_HARD_IOC_GAP_S))
+        stop_loss_cooldown_s = float(os.environ.get("STOP_LOSS_COOLDOWN_S", DEFAULT_STOP_LOSS_COOLDOWN_S))
+        stop_loss_second_cooldown_s = float(os.environ.get("STOP_LOSS_SECOND_COOLDOWN_S", DEFAULT_STOP_LOSS_SECOND_COOLDOWN_S))
+        stop_loss_sequence_window_s = float(os.environ.get("STOP_LOSS_SEQUENCE_WINDOW_S", DEFAULT_STOP_LOSS_SEQUENCE_WINDOW_S))
         position_reconcile_s = float(os.environ.get("POSITION_RECONCILE_S", "10"))
         open_orders_reconcile_s = float(os.environ.get("OPEN_ORDERS_RECONCILE_S", "15"))
         fill_reconcile_s = float(os.environ.get("FILL_RECONCILE_S", "60"))
@@ -191,7 +200,7 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         min_exit_edge_ticks = int(os.environ.get("MIN_EXIT_EDGE_TICKS", DEFAULT_MIN_EXIT_EDGE_TICKS))
     except ValueError as exc:
         raise ConfigError(f"invalid numeric config: {exc}") from exc
-    floats = (notional, notional_min, notional_max, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, flatten_hard_s, stop_loss_bps, hard_ioc_fraction, hard_ioc_gap_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
+    floats = (notional, notional_min, notional_max, referral, min_replace_s, entropy_self_rebate, entropy_referral_reward, entropy_referred, guardian_max_age, guardian_poll_s, flatten_far_s, flatten_take_s, flatten_hard_s, stop_loss_bps, hard_ioc_fraction, hard_ioc_gap_s, stop_loss_cooldown_s, stop_loss_second_cooldown_s, stop_loss_sequence_window_s, position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s, deadman_retry_s, shutdown_retry_s, info_min_interval_s, info_cooldown_base_s, info_cooldown_max_s)
     if rebate_bps is not None:
         floats += (rebate_bps,)
     if not all(math.isfinite(value) for value in floats):
@@ -212,6 +221,8 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         raise ConfigError("STOP_LOSS_BPS must be >= 0")
     if not 0 < hard_ioc_fraction <= 1 or hard_ioc_gap_s < 0:
         raise ConfigError("HARD_IOC_FRACTION must be in (0, 1] and HARD_IOC_GAP_S must be >= 0")
+    if min(stop_loss_cooldown_s, stop_loss_second_cooldown_s, stop_loss_sequence_window_s) < 0:
+        raise ConfigError("stop-loss cooldown values must be >= 0")
     if min(position_reconcile_s, open_orders_reconcile_s, fill_reconcile_s,
            deadman_retry_s, shutdown_retry_s) <= 0 or shutdown_cancel_attempts < 1:
         raise ConfigError("reconciliation, retry, and shutdown timing must be positive")
@@ -286,6 +297,9 @@ def load_settings(dotenv_path: str | Path | None = None, *, load_private_key: bo
         stop_loss_bps=stop_loss_bps,
         hard_ioc_fraction=hard_ioc_fraction,
         hard_ioc_gap_s=hard_ioc_gap_s,
+        stop_loss_cooldown_s=stop_loss_cooldown_s,
+        stop_loss_second_cooldown_s=stop_loss_second_cooldown_s,
+        stop_loss_sequence_window_s=stop_loss_sequence_window_s,
         position_reconcile_s=position_reconcile_s,
         open_orders_reconcile_s=open_orders_reconcile_s,
         fill_reconcile_s=fill_reconcile_s,
